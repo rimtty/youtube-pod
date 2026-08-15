@@ -31,10 +31,11 @@
 - 保存済み音声の削除後にダウンロード完了表示を破棄し、キュー末尾操作でも再生履歴を0秒で上書きしないことを確認
 - 起動時に中断された隠しステージングM4Aも孤児ファイルとして清掃することを確認
 - watchOS 27 / Apple Watch Series 9（41mm／45mm）Simulator: Watchアプリのビルドと回帰テストに成功
-- Watch側回帰テスト: 97件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
+- Watch側回帰テスト: 115件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認
 - WCSession callback URLを同期退避し、payload＋sidecar完成後のatomic rename、rename直前終了からの復旧、破損receiptの隔離を確認
 - WatchConnectivityの実delegate bridgeをdriverから分離し、callback復帰前のfile／削除command退避、activation、ACK／inventory送信、非active拒否を確認
+- watchOSのWatch Connectivity background taskを、bounded activation／content drainと共有同期Taskで完了まで保持し、追加receipt、timeout、cancel、次回wake再試行を確認
 - 音声trackあり／動画trackなし／M4A／宣言サイズをAVFoundationで検証し、容量不足を構造化エラーへ分類
 - Watch SwiftDataへの取込はreceiptをcommit完了まで保持し、保存失敗・プロセス終了窓でも旧音声と再試行payloadを失わないことを確認
 - final音声コピー後からSwiftData commit前の例外でも、未commitモデルと新規ファイルだけをrollbackし、ACK保存失敗時はreceiptから再試行できることを確認

@@ -58,6 +58,23 @@ struct WatchAudioValidatorTests {
         }
     }
 
+    @Test func cancellationIsNotWrappedAsInvalidAudio() async throws {
+        let url = try makeM4AAudioFile()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let size = Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        let task = Task {
+            try await AVFoundationWatchAudioValidator().validate(
+                fileURL: url,
+                envelope: envelope(fileSize: size)
+            )
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+    }
+
     private func envelope(fileSize: Int64) -> WatchTransferEnvelope {
         WatchTransferEnvelope(
             transferID: UUID(),

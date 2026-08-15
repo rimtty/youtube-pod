@@ -15,6 +15,7 @@ struct AVFoundationWatchAudioValidator: WatchAudioValidating {
         fileURL url: URL,
         envelope: WatchTransferEnvelope
     ) async throws -> ValidatedWatchAudio {
+        try Task.checkCancellation()
         guard envelope.fileKind == .audio, url.pathExtension.lowercased() == "m4a" else {
             throw WatchAudioValidationError.unsupportedFormat
         }
@@ -30,6 +31,7 @@ struct AVFoundationWatchAudioValidator: WatchAudioValidating {
             let videoTracks = try await asset.loadTracks(withMediaType: .video)
             let duration = try await asset.load(.duration).seconds
             let isPlayable = try await asset.load(.isPlayable)
+            try Task.checkCancellation()
             guard !audioTracks.isEmpty else {
                 throw WatchAudioValidationError.missingAudioTrack
             }
@@ -43,6 +45,8 @@ struct AVFoundationWatchAudioValidator: WatchAudioValidating {
                 actualFileSize: actualFileSize,
                 actualDuration: duration
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as WatchAudioValidationError {
             throw error
         } catch {
