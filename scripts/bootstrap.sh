@@ -21,10 +21,7 @@ install_python_packages() {
     --no-deps \
     --upgrade \
     --target "$PROJECT_ROOT/PythonRuntime/site-packages" \
-    "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/refs/tags/2026.07.04.tar.gz" \
-    "yt-dlp-ejs==0.8.0" \
-    "yt-dlp-apple-webkit-jsi @ https://github.com/grqz/yt-dlp-apple-webkit-jsi/archive/refs/tags/v0.1.1.tar.gz" \
-    "certifi==2025.8.3"
+    --requirement "$PROJECT_ROOT/PythonRuntime/requirements.lock"
 }
 
 if command -v uv >/dev/null 2>&1; then

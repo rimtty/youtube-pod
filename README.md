@@ -13,11 +13,21 @@ iOS 27 / SwiftUI で動作する、技術検証用のオンデバイス音声ラ
 4. `open YouTubePod.xcodeproj`
 5. Signing Team と Bundle ID を自分の環境に合わせ、iOS 27 実機で実行
 
-Python 3.14、`yt-dlp 2026.07.04`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `bootstrap.sh` が固定バージョンで準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。
+Python 3.14、`yt-dlp 2026.07.04`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `PythonRuntime/requirements.lock` の固定バージョンを使って `bootstrap.sh` が準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。
 
 同梱CPythonのSimulator拡張はarm64向けです。Xcode 27をApple Silicon Macで使用してください。
 
 YouTube Data APIへのすべてのリクエストは、アプリ内のGoogleログインで取得した`youtube.readonly` OAuthトークンを使用します。APIキーは使用しません。OAuth同意画面がテスト中の場合は、利用するGoogleアカウントをテストユーザーへ追加してください。
+
+Google認証を復元できない場合でも、認証画面の「保存済みの音声を開く」からローカルライブラリだけを利用できます。このモードではホーム、検索、登録チャンネル、視聴回数更新、新規ダウンロードは表示せず、端末内の一覧・サムネイル・再生位置・音声だけを使用します。
+
+## YouTube Data APIの通信予算
+
+登録チャンネル新着は、初回に最大20チャンネルだけを取得します。各チャンネルのUploadsプレイリストはYouTube Data APIの仕様上個別に問い合わせる必要があるため、初回ページの`playlistItems.list`は最大20回です。次の20チャンネルは、登録チャンネル画面で「さらに登録チャンネルを読み込む」を押した場合だけ取得します。
+
+同じGoogleセッション・同じページの同時リクエストは1本へ集約し、ホームと登録チャンネル画面が同時に表示されても重複取得しません。成功結果は15分キャッシュし、Pull to Refreshは表示中のフィードだけを更新します。動画検索はキーボードの検索確定時だけ実行し、新しい検索を開始した場合は古い検索をキャンセルします。
+
+Pull to Refreshの成功後60秒間は同じページを再通信せず、直前の結果を表示します。異なるページやチャンネル画面から同時に取得しても、`playlistItems.list`の並列通信はアプリ全体で最大4本です。現在の実APIリクエスト数検証はGoogle Cloudプロジェクトの日次クォータ到達により延期しています。再検証条件と期待リクエスト数は[TESTING.md](TESTING.md)に記録しています。
 
 ## 制限
 
@@ -25,6 +35,7 @@ YouTube Data APIへのすべてのリクエストは、アプリ内のGoogleロ�
 - M4A 音声形式が提供される動画のみ。FFmpeg 変換は行わない
 - ダウンロードはアプリがフォアグラウンドの間のみ
 - YouTube の個人向けホーム推薦ではなく、登録チャンネル新着・人気動画・検索を表示
+- Googleログイン済みでもYouTube本体の視聴履歴はData APIから取得不可（`watchHistoryNotAccessible`）
 
 ## 検証
 

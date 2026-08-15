@@ -13,6 +13,7 @@
 		233530C72F9679D4A70EAF7C /* SubscriptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEC8820DB6F98C9905112D1 /* SubscriptionsView.swift */; };
 		258671AADEF9343C818246D9 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECBF84DBA1C1C2CBC63844AA /* HomeView.swift */; };
 		2D3A5A4992970B649940D77F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0D5526A070535A974E9A0A /* RootView.swift */; };
+		33A53FEA32B8C9C824EE6735 /* GoogleAuthServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E8811AF44B280943CC212 /* GoogleAuthServiceTests.swift */; };
 		35F4176E804486C8FFEA1521 /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7088CDCBA218FE36100270DC /* AccountSettingsView.swift */; };
 		3B240296E21020FC8807F61C /* VideoRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A574E735EDFA6630EEDAE4AF /* VideoRowView.swift */; };
 		49663BDEFEBD7319E409C0F2 /* YouTubeURLParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044E5B32006034714D27B5C4 /* YouTubeURLParserTests.swift */; };
@@ -79,6 +80,7 @@
 		3D0D5526A070535A974E9A0A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		49D938277CED715FEDC875BB /* DisplayFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayFormatterTests.swift; sourceTree = "<group>"; };
 		4A161B732F2924D0196A1B91 /* YouTubePod.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YouTubePod.entitlements; sourceTree = "<group>"; };
+		501E8811AF44B280943CC212 /* GoogleAuthServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthServiceTests.swift; sourceTree = "<group>"; };
 		57C815A832E88BFC47DB83BB /* ChannelVideosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelVideosView.swift; sourceTree = "<group>"; };
 		5AAC5454886101653737213F /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		7088CDCBA218FE36100270DC /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
@@ -173,6 +175,7 @@
 				49D938277CED715FEDC875BB /* DisplayFormatterTests.swift */,
 				D4AE588449D9CD2706E58E68 /* DomainModelTests.swift */,
 				0E579C68BB42B0407B7EFC0E /* DownloadManagerTests.swift */,
+				501E8811AF44B280943CC212 /* GoogleAuthServiceTests.swift */,
 				C7B4E37CCE420CE9C726446E /* YouTubeDataClientTests.swift */,
 				044E5B32006034714D27B5C4 /* YouTubeURLParserTests.swift */,
 			);
@@ -442,6 +445,7 @@
 				9F8C9152F861B94AE9C4DAB0 /* DisplayFormatterTests.swift in Sources */,
 				F80C5EA6DB744FB9DFA01821 /* DomainModelTests.swift in Sources */,
 				A790A44F5FF630C0F039F724 /* DownloadManagerTests.swift in Sources */,
+				33A53FEA32B8C9C824EE6735 /* GoogleAuthServiceTests.swift in Sources */,
 				7B76EAB0602D03F3C98FA873 /* YouTubeDataClientTests.swift in Sources */,
 				49663BDEFEBD7319E409C0F2 /* YouTubeURLParserTests.swift in Sources */,
 			);

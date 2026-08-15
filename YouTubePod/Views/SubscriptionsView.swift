@@ -14,6 +14,7 @@ struct SubscriptionsView: View {
     @State private var errorMessage: String?
     @State private var loadMoreError: String?
     @State private var selectedChannel: ChannelDestination?
+    @State private var visitedPageTokens = Set<String>()
 
     var body: some View {
         NavigationStack {
@@ -43,6 +44,20 @@ struct SubscriptionsView: View {
                                     subtitle: "\(videos.count)本の公開動画",
                                     systemImage: "arrow.down.to.line.compact"
                                 )
+                                if let errorMessage {
+                                    VStack(spacing: 8) {
+                                        Label(errorMessage, systemImage: "arrow.clockwise.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .multilineTextAlignment(.center)
+                                        Button("もう一度試す") {
+                                            Task { await load(forceRefresh: true) }
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                }
                                 ForEach(videos) { video in
                                     VideoRowView(
                                         video: video,
@@ -77,27 +92,32 @@ struct SubscriptionsView: View {
             }
             .navigationTitle("登録チャンネル")
             .refreshable { await load(forceRefresh: true) }
-            .task { await load(forceRefresh: false) }
+            .task(id: environment.auth.sessionID) {
+                guard videos.isEmpty else { return }
+                await load(forceRefresh: false)
+            }
         }
     }
 
     @MainActor
     private func load(forceRefresh: Bool = false) async {
-        guard !isLoading else { return }
+        guard !isLoading, !isLoadingMore else { return }
+        if !forceRefresh, !videos.isEmpty { return }
         isLoading = true
         errorMessage = nil
         loadMoreError = nil
         defer { isLoading = false }
 
-        if forceRefresh {
-            await environment.catalog.clearCache()
-        }
-
         do {
-            let page = try await environment.catalog.subscriptionUploadsPage(pageToken: nil)
+            let page = try await environment.catalog.subscriptionUploadsPage(
+                pageToken: nil,
+                forceRefresh: forceRefresh
+            )
             videos = page.videos
-            nextPageToken = page.nextPageToken
+            visitedPageTokens.removeAll()
+            nextPageToken = validatedNextToken(page.nextPageToken, after: nil)
         } catch {
+            if error is CancellationError { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -133,16 +153,26 @@ struct SubscriptionsView: View {
 
     @MainActor
     private func loadMore() async {
-        guard let token = nextPageToken, !isLoadingMore else { return }
+        guard let token = nextPageToken, !isLoading, !isLoadingMore else { return }
         isLoadingMore = true
         loadMoreError = nil
         defer { isLoadingMore = false }
         do {
-            let page = try await environment.catalog.subscriptionUploadsPage(pageToken: token)
+            let page = try await environment.catalog.subscriptionUploadsPage(
+                pageToken: token,
+                forceRefresh: false
+            )
             videos = YouTubeDataClient.mergeUnique([videos, page.videos])
-            nextPageToken = page.nextPageToken
+            nextPageToken = validatedNextToken(page.nextPageToken, after: token)
         } catch {
+            if error is CancellationError { return }
             loadMoreError = error.localizedDescription
         }
+    }
+
+    private func validatedNextToken(_ candidate: String?, after current: String?) -> String? {
+        guard let candidate, !candidate.isEmpty, candidate != current,
+              visitedPageTokens.insert(candidate).inserted else { return nil }
+        return candidate
     }
 }

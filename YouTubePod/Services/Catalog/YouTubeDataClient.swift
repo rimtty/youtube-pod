@@ -9,22 +9,30 @@ actor YouTubeDataClient: YouTubeCatalogServing {
     private let authenticationFailureHandler: AuthenticationFailureHandler
     private let session: URLSession
     private var cache: [String: CacheEntry] = [:]
+    private var inFlight: [String: InFlightRequest] = [:]
+    private let playlistRequestLimiter = AsyncRequestLimiter(limit: 4)
     private let cacheLifetime: TimeInterval = 15 * 60
+    private let manualRefreshCooldown: TimeInterval
     private let logger = Logger(subsystem: "com.rimtty.YouTubePod", category: "YouTubeData")
 
     init(
         credentialProvider: @escaping CredentialProvider,
         authenticationFailureHandler: @escaping AuthenticationFailureHandler = {},
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        manualRefreshCooldown: TimeInterval = 60
     ) {
         self.credentialProvider = credentialProvider
         self.authenticationFailureHandler = authenticationFailureHandler
         self.session = session
+        self.manualRefreshCooldown = manualRefreshCooldown
     }
 
-    func popularVideos(regionCode: String = "JP") async throws -> [VideoSummary] {
+    func popularVideos(regionCode: String = "JP", forceRefresh: Bool = false) async throws -> [VideoSummary] {
         let credential = try await requireCredential()
-        return try await cached("\(credential.accountID):\(credential.sessionID):popular:\(regionCode)") {
+        return try await cached(
+            "\(credential.accountID):\(credential.sessionID):popular:\(regionCode)",
+            forceRefresh: forceRefresh
+        ) {
             let response: VideoListResponse = try await self.request(
                 "videos",
                 query: [
@@ -57,38 +65,22 @@ actor YouTubeDataClient: YouTubeCatalogServing {
         return try await videoDetails(ids: result.items.map(\.id.videoID), credential: credential)
     }
 
-    func subscriptionUploads() async throws -> [VideoSummary] {
-        var pages: [[VideoSummary]] = []
-        var pageToken: String?
-        var visitedPageTokens = Set<String>()
-
-        repeat {
-            let page = try await subscriptionUploadsPage(pageToken: pageToken)
-            pages.append(page.videos)
-
-            guard let nextPageToken = page.nextPageToken,
-                  !nextPageToken.isEmpty,
-                  visitedPageTokens.insert(nextPageToken).inserted else {
-                pageToken = nil
-                continue
-            }
-            pageToken = nextPageToken
-        } while pageToken != nil
-
-        return Self.mergeUnique(pages)
-    }
-
-    func subscriptionUploadsPage(pageToken: String?) async throws -> SubscriptionFeedPage {
+    func subscriptionUploadsPage(
+        pageToken: String?,
+        forceRefresh: Bool = false
+    ) async throws -> SubscriptionFeedPage {
         let credential = try await requireCredential()
         let pageKey = pageToken ?? "first"
-        return try await cached("\(credential.accountID):\(credential.sessionID):subscriptions:activity50:\(pageKey)") {
-            // A user can subscribe to hundreds of channels. Loading every page and then
-            // querying each uploads playlist makes the first screen take minutes. Each
-            // page stays bounded while the UI can still continue through every channel.
+        return try await cached(
+            "\(credential.accountID):\(credential.sessionID):subscriptions:activity20:\(pageKey)",
+            forceRefresh: forceRefresh
+        ) {
+            // Each subscribed channel requires its own uploads-playlist request.
+            // Keep a page deliberately small and let the user request later pages.
             var query = [
                 "part": "snippet",
                 "mine": "true",
-                "maxResults": "50",
+                "maxResults": "20",
                 "order": "unread",
             ]
             if let pageToken { query["pageToken"] = pageToken }
@@ -121,13 +113,18 @@ actor YouTubeDataClient: YouTubeCatalogServing {
         }
     }
 
-    func channelVideosPage(channelID: String, pageToken: String?) async throws -> ChannelVideoPage {
+    func channelVideosPage(
+        channelID: String,
+        pageToken: String?,
+        forceRefresh: Bool = false
+    ) async throws -> ChannelVideoPage {
         let credential = try await requireCredential()
         let cleanedChannelID = channelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedChannelID.isEmpty else { throw CatalogError.invalidRequest }
         let pageKey = pageToken ?? "first"
         return try await cached(
-            "\(credential.accountID):\(credential.sessionID):channel:\(cleanedChannelID):\(pageKey)"
+            "\(credential.accountID):\(credential.sessionID):channel:\(cleanedChannelID):\(pageKey)",
+            forceRefresh: forceRefresh
         ) {
             let channels: ChannelListResponse = try await self.request(
                 "channels",
@@ -147,11 +144,14 @@ actor YouTubeDataClient: YouTubeCatalogServing {
                 "maxResults": "25",
             ]
             if let pageToken { query["pageToken"] = pageToken }
-            let playlist: PlaylistItemListResponse = try await self.request(
-                "playlistItems",
-                query: query,
-                credential: credential
-            )
+            let playlistQuery = query
+            let playlist: PlaylistItemListResponse = try await self.playlistRequestLimiter.withPermit {
+                try await self.request(
+                    "playlistItems",
+                    query: playlistQuery,
+                    credential: credential
+                )
+            }
             let videoIDs = playlist.items.compactMap { $0.contentDetails?.videoID }
             let videos = try await self.videoDetails(ids: videoIDs, credential: credential)
             return ChannelVideoPage(
@@ -168,6 +168,8 @@ actor YouTubeDataClient: YouTubeCatalogServing {
     }
 
     func clearCache() {
+        for request in inFlight.values { request.task.cancel() }
+        inFlight.removeAll()
         cache.removeAll()
     }
 
@@ -195,11 +197,13 @@ actor YouTubeDataClient: YouTubeCatalogServing {
     }
 
     private func uploadVideoIDs(playlistID: String, credential: YouTubeCredential) async throws -> [String] {
-        let response: PlaylistItemListResponse = try await request(
-            "playlistItems",
-            query: ["part": "contentDetails", "playlistId": playlistID, "maxResults": "5"],
-            credential: credential
-        )
+        let response: PlaylistItemListResponse = try await playlistRequestLimiter.withPermit {
+            try await self.request(
+                "playlistItems",
+                query: ["part": "contentDetails", "playlistId": playlistID, "maxResults": "3"],
+                credential: credential
+            )
+        }
         return response.items.compactMap { $0.contentDetails?.videoID }
     }
 
@@ -220,14 +224,90 @@ actor YouTubeDataClient: YouTubeCatalogServing {
         return result
     }
 
-    private func cached<T: Codable & Sendable>(_ key: String, loader: () async throws -> T) async throws -> T {
-        if let entry = cache[key], Date().timeIntervalSince(entry.date) < cacheLifetime,
+    private func cached<T: Codable & Sendable>(
+        _ key: String,
+        forceRefresh: Bool,
+        loader: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let now = Date()
+        if forceRefresh, let entry = cache[key],
+           now.timeIntervalSince(entry.date) < manualRefreshCooldown,
            let value = try? JSONDecoder.youtube.decode(T.self, from: entry.data) {
             return value
         }
-        let value = try await loader()
-        if let data = try? JSONEncoder().encode(value) { cache[key] = CacheEntry(date: .now, data: data) }
-        return value
+        if forceRefresh { cache[key] = nil }
+        if let entry = cache[key], now.timeIntervalSince(entry.date) < cacheLifetime,
+           let value = try? JSONDecoder.youtube.decode(T.self, from: entry.data) {
+            return value
+        }
+        if let request = inFlight[key] {
+            return try await waitForSharedRequest(request, key: key, as: T.self)
+        }
+
+        let requestID = UUID()
+        let task = Task<Data, Error> {
+            let value = try await loader()
+            return try JSONEncoder.youtube.encode(value)
+        }
+        let request = InFlightRequest(id: requestID, task: task, waiters: [])
+        inFlight[key] = request
+        return try await waitForSharedRequest(request, key: key, as: T.self)
+    }
+
+    private func waitForSharedRequest<T: Codable & Sendable>(
+        _ request: InFlightRequest,
+        key: String,
+        as type: T.Type
+    ) async throws -> T {
+        let waiterID = UUID()
+        if var current = inFlight[key], current.id == request.id {
+            current.waiters.insert(waiterID)
+            inFlight[key] = current
+        }
+
+        do {
+            let data = try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                let data = try await request.task.value
+                try Task.checkCancellation()
+                return data
+            } onCancel: {
+                Task {
+                    await self.cancelWaiter(
+                        waiterID,
+                        forKey: key,
+                        requestID: request.id
+                    )
+                }
+            }
+            if inFlight[key]?.id == request.id {
+                inFlight[key] = nil
+                cache[key] = CacheEntry(date: .now, data: data)
+            }
+            return try JSONDecoder.youtube.decode(T.self, from: data)
+        } catch {
+            if var current = inFlight[key], current.id == request.id {
+                current.waiters.remove(waiterID)
+                if Task.isCancelled, !current.waiters.isEmpty {
+                    inFlight[key] = current
+                } else {
+                    if Task.isCancelled { current.task.cancel() }
+                    inFlight[key] = nil
+                }
+            }
+            throw error
+        }
+    }
+
+    private func cancelWaiter(_ waiterID: UUID, forKey key: String, requestID: UUID) {
+        guard var request = inFlight[key], request.id == requestID else { return }
+        request.waiters.remove(waiterID)
+        if request.waiters.isEmpty {
+            request.task.cancel()
+            inFlight[key] = nil
+        } else {
+            inFlight[key] = request
+        }
     }
 
     private func request<T: Decodable>(
@@ -246,6 +326,8 @@ actor YouTubeDataClient: YouTubeCatalogServing {
         do {
             (data, response) = try await session.data(for: request)
         } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch {
             throw CatalogError.network(error.localizedDescription)
@@ -315,6 +397,69 @@ enum CatalogError: LocalizedError {
 }
 
 private struct CacheEntry { let date: Date; let data: Data }
+private struct InFlightRequest {
+    let id: UUID
+    let task: Task<Data, Error>
+    var waiters: Set<UUID>
+}
+
+private actor AsyncRequestLimiter {
+    private let limit: Int
+    private var availablePermits: Int
+    private var waitingOrder: [UUID] = []
+    private var waiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+
+    init(limit: Int) {
+        precondition(limit > 0)
+        self.limit = limit
+        availablePermits = limit
+    }
+
+    func withPermit<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    private func acquire() async throws {
+        try Task.checkCancellation()
+        if availablePermits > 0 {
+            availablePermits -= 1
+            return
+        }
+
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters[waiterID] = continuation
+                waitingOrder.append(waiterID)
+            }
+            try Task.checkCancellation()
+        } onCancel: {
+            Task { await self.cancel(waiterID) }
+        }
+    }
+
+    private func cancel(_ waiterID: UUID) {
+        guard let continuation = waiters.removeValue(forKey: waiterID) else { return }
+        waitingOrder.removeAll { $0 == waiterID }
+        continuation.resume(throwing: CancellationError())
+    }
+
+    private func release() {
+        while let waiterID = waitingOrder.first {
+            waitingOrder.removeFirst()
+            if let continuation = waiters.removeValue(forKey: waiterID) {
+                continuation.resume()
+                return
+            }
+        }
+        availablePermits = min(limit, availablePermits + 1)
+    }
+}
 
 private protocol PageResponse: Decodable {
     associatedtype Item: Decodable
@@ -416,6 +561,14 @@ private extension JSONDecoder {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+}
+
+private extension JSONEncoder {
+    static var youtube: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 }
 

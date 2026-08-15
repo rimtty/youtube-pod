@@ -4,22 +4,38 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var savedAudios: [SavedAudio]
 
     @State private var selectedTab = AppTab.home
     @State private var showsAccount = false
     @State private var showsPlayer = false
+    @State private var isBrowsingOfflineLibrary = false
 
     var body: some View {
         rootContent
-            .animation(.smooth, value: environment.auth.phase)
-            .onChange(of: environment.auth.sessionID) { _, _ in
-                Task { await environment.catalog.clearCache() }
+            .animation(reduceMotion ? nil : .smooth, value: environment.auth.phase)
+            .sheet(isPresented: $showsPlayer) {
+                playerSheet
             }
             .onChange(of: environment.auth.isSignedIn) { _, isSignedIn in
-                guard !isSignedIn else { return }
-                showsAccount = false
-                Task { await environment.downloads.cancelAll() }
+                if isSignedIn {
+                    isBrowsingOfflineLibrary = false
+                } else {
+                    showsAccount = false
+                    Task {
+                        await environment.downloads.cancelAll()
+                        await environment.catalog.clearCache()
+                    }
+                    if environment.player.currentItem != nil, !savedAudios.isEmpty {
+                        isBrowsingOfflineLibrary = true
+                    }
+                }
+            }
+            .onChange(of: savedAudios.count) { _, count in
+                if count == 0 {
+                    isBrowsingOfflineLibrary = false
+                }
             }
             .onChange(of: environment.player.currentItem?.id) { _, itemID in
                 if itemID == nil {
@@ -35,16 +51,26 @@ struct RootView: View {
 
     @ViewBuilder
     private var rootContent: some View {
-        switch environment.auth.phase {
-        case .restoring:
-            AuthenticationRestoringView()
+        if isBrowsingOfflineLibrary, !environment.auth.isSignedIn {
+            offlineLibrary
                 .transition(.opacity)
-        case .signedIn:
-            authenticatedApp
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-        case .signedOut, .signingIn, .failed:
-            AuthenticationView()
+        } else {
+            switch environment.auth.phase {
+            case .restoring:
+                AuthenticationRestoringView()
+                    .transition(.opacity)
+            case .signedIn:
+                authenticatedApp
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            case .signedOut, .signingIn, .authorizationRequired, .failed:
+                AuthenticationView(
+                    savedAudioCount: savedAudios.count,
+                    openOfflineLibrary: {
+                        isBrowsingOfflineLibrary = true
+                    }
+                )
                 .transition(.opacity)
+            }
         }
     }
 
@@ -59,26 +85,42 @@ struct RootView: View {
                     signOut: environment.auth.signOut
                 )
             }
-            .sheet(isPresented: $showsPlayer) {
-                if let item = environment.player.currentItem {
-                    FullPlayerView(
-                        item: item,
-                        isPlaying: environment.player.isPlaying,
-                        currentTime: environment.player.currentTime,
-                        togglePlayback: environment.player.togglePlayback,
-                        seek: environment.player.seek,
-                        skip: environment.player.skip,
-                        previous: environment.player.previous,
-                        next: environment.player.next
-                    )
-                } else {
-                    PodEmptyState(
-                        icon: "speaker.slash",
-                        title: "再生が終了しました",
-                        message: "ライブラリから音声を選んでください。"
-                    )
+    }
+
+    private var offlineLibrary: some View {
+        tabContent {
+            LibraryView(
+                allowsOnlineActions: false,
+                closeOfflineLibrary: {
+                    isBrowsingOfflineLibrary = false
+                },
+                signIn: {
+                    Task { try? await environment.auth.signIn() }
                 }
-            }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var playerSheet: some View {
+        if let item = environment.player.currentItem {
+            FullPlayerView(
+                item: item,
+                isPlaying: environment.player.isPlaying,
+                currentTime: environment.player.currentTime,
+                togglePlayback: environment.player.togglePlayback,
+                seek: environment.player.seek,
+                skip: environment.player.skip,
+                previous: environment.player.previous,
+                next: environment.player.next
+            )
+        } else {
+            PodEmptyState(
+                icon: "speaker.slash",
+                title: "再生が終了しました",
+                message: "ライブラリから音声を選んでください。"
+            )
+        }
     }
 
     private var tabViewWithOptionalMiniPlayer: some View {
@@ -126,7 +168,7 @@ struct RootView: View {
             .safeAreaInset(edge: .bottom, spacing: 8) {
                 miniPlayer
             }
-            .animation(.smooth, value: environment.player.currentItem?.id)
+            .animation(reduceMotion ? nil : .smooth, value: environment.player.currentItem?.id)
     }
 
     @ViewBuilder

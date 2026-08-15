@@ -190,13 +190,15 @@ final class YouTubeDataClientTests: XCTestCase {
             switch request.url?.path {
             case "/youtube/v3/subscriptions":
                 let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
-                XCTAssertEqual(query?.first { $0.name == "maxResults" }?.value, "50")
+                XCTAssertEqual(query?.first { $0.name == "maxResults" }?.value, "20")
                 XCTAssertEqual(query?.first { $0.name == "order" }?.value, "unread")
                 XCTAssertNil(query?.first { $0.name == "pageToken" })
                 payload = #"{"items":[{"snippet":{"resourceId":{"channelId":"channel-1"}}}]}"#
             case "/youtube/v3/channels":
                 payload = #"{"items":[{"contentDetails":{"relatedPlaylists":{"uploads":"uploads-1"}}}]}"#
             case "/youtube/v3/playlistItems":
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+                XCTAssertEqual(query?.first { $0.name == "maxResults" }?.value, "3")
                 payload = #"{"items":[{"contentDetails":null},{"contentDetails":{"videoId":null}},{"contentDetails":{"videoId":"video-1"}}]}"#
             case "/youtube/v3/videos":
                 payload = #"{"items":[{"id":"video-1","snippet":{"title":"Available video","channelTitle":"Channel","publishedAt":"2026-08-15T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"10"},"contentDetails":{"duration":"PT3M"}}]}"#
@@ -207,7 +209,7 @@ final class YouTubeDataClientTests: XCTestCase {
         }
         let client = makeClient()
 
-        let videos = try await client.subscriptionUploads()
+        let videos = try await client.subscriptionUploadsPage(pageToken: nil).videos
 
         XCTAssertEqual(videos.map(\.id), ["video-1"])
     }
@@ -229,39 +231,22 @@ final class YouTubeDataClientTests: XCTestCase {
         XCTAssertEqual(page.nextPageToken, "outgoing-page")
     }
 
-    func testSubscriptionUploadsAggregatesEverySubscriptionPageAndRemovesDuplicates() async throws {
+    func testSubscriptionPageDoesNotAutomaticallyFollowNextPage() async throws {
+        let subscriptionRequests = LockedCounter()
         URLProtocolStub.handler = { request in
             let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
             let pageToken = query?.first { $0.name == "pageToken" }?.value
             let payload: String
             switch request.url?.path {
             case "/youtube/v3/subscriptions" where pageToken == nil:
+                subscriptionRequests.increment()
                 payload = #"{"nextPageToken":"page-2","items":[{"snippet":{"resourceId":{"channelId":"channel-1"}}}]}"#
-            case "/youtube/v3/subscriptions" where pageToken == "page-2":
-                payload = #"{"items":[{"snippet":{"resourceId":{"channelId":"channel-2"}}}]}"#
             case "/youtube/v3/channels":
-                let channelID = query?.first { $0.name == "id" }?.value
-                payload = channelID == "channel-1"
-                    ? #"{"items":[{"contentDetails":{"relatedPlaylists":{"uploads":"uploads-1"}}}]}"#
-                    : #"{"items":[{"contentDetails":{"relatedPlaylists":{"uploads":"uploads-2"}}}]}"#
+                payload = #"{"items":[{"contentDetails":{"relatedPlaylists":{"uploads":"uploads-1"}}}]}"#
             case "/youtube/v3/playlistItems":
-                let playlistID = query?.first { $0.name == "playlistId" }?.value
-                payload = playlistID == "uploads-1"
-                    ? #"{"items":[{"contentDetails":{"videoId":"sharedvideo"}},{"contentDetails":{"videoId":"oldervideo1"}}]}"#
-                    : #"{"items":[{"contentDetails":{"videoId":"sharedvideo"}},{"contentDetails":{"videoId":"newervideo1"}}]}"#
+                payload = #"{"items":[{"contentDetails":{"videoId":"video-1"}}]}"#
             case "/youtube/v3/videos":
-                let ids = Set((query?.first { $0.name == "id" }?.value ?? "").split(separator: ",").map(String.init))
-                var items: [String] = []
-                if ids.contains("sharedvideo") {
-                    items.append(#"{"id":"sharedvideo","snippet":{"title":"Shared","channelTitle":"Channel","publishedAt":"2026-08-14T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"1"},"contentDetails":{"duration":"PT1M"}}"#)
-                }
-                if ids.contains("oldervideo1") {
-                    items.append(#"{"id":"oldervideo1","snippet":{"title":"Older","channelTitle":"Channel","publishedAt":"2026-08-13T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"1"},"contentDetails":{"duration":"PT1M"}}"#)
-                }
-                if ids.contains("newervideo1") {
-                    items.append(#"{"id":"newervideo1","snippet":{"title":"Newer","channelTitle":"Channel","publishedAt":"2026-08-15T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"1"},"contentDetails":{"duration":"PT1M"}}"#)
-                }
-                payload = "{\"items\":[\(items.joined(separator: ","))]}"
+                payload = #"{"items":[{"id":"video-1","snippet":{"title":"Video","channelTitle":"Channel","publishedAt":"2026-08-15T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"1"},"contentDetails":{"duration":"PT1M"}}]}"#
             default:
                 throw URLError(.unsupportedURL)
             }
@@ -269,27 +254,228 @@ final class YouTubeDataClientTests: XCTestCase {
         }
         let client = makeClient()
 
-        let videos = try await client.subscriptionUploads()
+        let page = try await client.subscriptionUploadsPage(pageToken: nil)
 
-        XCTAssertEqual(videos.map(\.id), ["newervideo1", "sharedvideo", "oldervideo1"])
+        XCTAssertEqual(page.videos.map(\.id), ["video-1"])
+        XCTAssertEqual(page.nextPageToken, "page-2")
+        XCTAssertEqual(subscriptionRequests.value, 1)
     }
 
-    func testSubscriptionUploadsStopsWhenYouTubeRepeatsAPageToken() async throws {
-        let subscriptionRequests = LockedCounter()
+    func testConcurrentSubscriptionPageRequestsUseOneBoundedSingleFlight() async throws {
+        let subscriptionsRequests = LockedCounter()
+        let channelsRequests = LockedCounter()
+        let playlistRequests = LockedCounter()
+        let videosRequests = LockedCounter()
         URLProtocolStub.handler = { request in
-            guard request.url?.path == "/youtube/v3/subscriptions" else {
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+            let payload: String
+            switch request.url?.path {
+            case "/youtube/v3/subscriptions":
+                subscriptionsRequests.increment()
+                Thread.sleep(forTimeInterval: 0.05)
+                let items = (1...20).map {
+                    #"{"snippet":{"resourceId":{"channelId":"channel-\#($0)"}}}"#
+                }.joined(separator: ",")
+                payload = "{\"items\":[\(items)]}"
+            case "/youtube/v3/channels":
+                channelsRequests.increment()
+                let ids = (query?.first { $0.name == "id" }?.value ?? "").split(separator: ",")
+                let items = ids.map { channelID in
+                    let suffix = channelID.split(separator: "-").last ?? "0"
+                    return #"{"contentDetails":{"relatedPlaylists":{"uploads":"uploads-\#(suffix)"}}}"#
+                }.joined(separator: ",")
+                payload = "{\"items\":[\(items)]}"
+            case "/youtube/v3/playlistItems":
+                playlistRequests.increment()
+                let playlistID = query?.first { $0.name == "playlistId" }?.value ?? ""
+                let suffix = playlistID.split(separator: "-").last ?? "0"
+                payload = #"{"items":[{"contentDetails":{"videoId":"video-\#(suffix)"}}]}"#
+            case "/youtube/v3/videos":
+                videosRequests.increment()
+                let ids = (query?.first { $0.name == "id" }?.value ?? "").split(separator: ",")
+                let items = ids.map {
+                    #"{"id":"\#($0)","snippet":{"title":"Video","channelTitle":"Channel","publishedAt":"2026-08-15T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"1"},"contentDetails":{"duration":"PT1M"}}"#
+                }.joined(separator: ",")
+                payload = "{\"items\":[\(items)]}"
+            default:
                 throw URLError(.unsupportedURL)
             }
-            subscriptionRequests.increment()
-            let payload = #"{"nextPageToken":"same-token","items":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let sessionID = UUID()
+        let client = YouTubeDataClient(
+            credentialProvider: {
+                YouTubeCredential(accessToken: "token", accountID: "account", sessionID: sessionID)
+            },
+            session: URLSession(configuration: configuration)
+        )
+
+        async let first = client.subscriptionUploadsPage(pageToken: nil)
+        async let second = client.subscriptionUploadsPage(pageToken: nil)
+        let pages = try await [first, second]
+
+        XCTAssertEqual(pages[0].videos.count, 20)
+        XCTAssertEqual(pages[1].videos.count, 20)
+        XCTAssertEqual(subscriptionsRequests.value, 1)
+        XCTAssertEqual(channelsRequests.value, 1)
+        XCTAssertEqual(playlistRequests.value, 20)
+        XCTAssertEqual(videosRequests.value, 1)
+    }
+
+    func testCancellingOneSingleFlightWaiterKeepsRequestForRemainingWaiter() async throws {
+        let requestCount = LockedCounter()
+        URLProtocolStub.handler = { request in
+            requestCount.increment()
+            Thread.sleep(forTimeInterval: 0.1)
+            let payload = #"{"items":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let sessionID = UUID()
+        let client = YouTubeDataClient(
+            credentialProvider: {
+                YouTubeCredential(accessToken: "token", accountID: "account", sessionID: sessionID)
+            },
+            session: URLSession(configuration: configuration)
+        )
+
+        let cancelledWaiter = Task { try await client.popularVideos(regionCode: "JP") }
+        try await Task.sleep(for: .milliseconds(10))
+        let remainingWaiter = Task { try await client.popularVideos(regionCode: "JP") }
+        try await Task.sleep(for: .milliseconds(10))
+        cancelledWaiter.cancel()
+
+        do {
+            _ = try await cancelledWaiter.value
+            XCTFail("The cancelled waiter must finish as cancelled")
+        } catch is CancellationError {
+            // Expected. The shared request remains alive for the other waiter.
+        }
+        let videos = try await remainingWaiter.value
+
+        XCTAssertTrue(videos.isEmpty)
+        XCTAssertEqual(requestCount.value, 1)
+    }
+
+    func testSharedRequestCancellationFailureCanBeRetried() async throws {
+        let requestCount = LockedCounter()
+        URLProtocolStub.handler = { request in
+            requestCount.increment()
+            if requestCount.value == 1 { throw URLError(.cancelled) }
+            let payload = #"{"items":[]}"#
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
         }
         let client = makeClient()
 
-        let videos = try await client.subscriptionUploads()
+        do {
+            _ = try await client.popularVideos(regionCode: "JP")
+            XCTFail("Expected the first shared request to be cancelled")
+        } catch is CancellationError {
+            // Expected. This cancellation originates in the shared request, not the caller.
+        }
 
+        let videos = try await client.popularVideos(regionCode: "JP")
         XCTAssertTrue(videos.isEmpty)
+        XCTAssertEqual(requestCount.value, 2)
+    }
+
+    func testPlaylistRequestsAcrossDifferentPagesNeverExceedFourConcurrentCalls() async throws {
+        let playlistRequests = LockedCounter()
+        let concurrency = LockedConcurrencyTracker()
+        URLProtocolStub.handler = { request in
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+            let payload: String
+            switch request.url?.path {
+            case "/youtube/v3/subscriptions":
+                let page = query?.first { $0.name == "pageToken" }?.value ?? "first"
+                let items = (1...4).map {
+                    #"{"snippet":{"resourceId":{"channelId":"channel-\#(page)-\#($0)"}}}"#
+                }.joined(separator: ",")
+                payload = "{\"items\":[\(items)]}"
+            case "/youtube/v3/channels":
+                let ids = (query?.first { $0.name == "id" }?.value ?? "").split(separator: ",")
+                let items = ids.map {
+                    #"{"contentDetails":{"relatedPlaylists":{"uploads":"uploads-\#($0)"}}}"#
+                }.joined(separator: ",")
+                payload = "{\"items\":[\(items)]}"
+            case "/youtube/v3/playlistItems":
+                playlistRequests.increment()
+                concurrency.begin()
+                defer { concurrency.end() }
+                Thread.sleep(forTimeInterval: 0.05)
+                payload = #"{"items":[]}"#
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let sessionID = UUID()
+        let client = YouTubeDataClient(
+            credentialProvider: {
+                YouTubeCredential(accessToken: "token", accountID: "account", sessionID: sessionID)
+            },
+            session: URLSession(configuration: configuration)
+        )
+
+        async let first = client.subscriptionUploadsPage(pageToken: "page-a")
+        async let second = client.subscriptionUploadsPage(pageToken: "page-b")
+        _ = try await [first, second]
+
+        XCTAssertEqual(playlistRequests.value, 8)
+        XCTAssertLessThanOrEqual(concurrency.peak, 4)
+    }
+
+    func testTargetedSubscriptionRefreshDoesNotEvictPopularCache() async throws {
+        let popularRequests = LockedCounter()
+        let subscriptionRequests = LockedCounter()
+        URLProtocolStub.handler = { request in
+            switch request.url?.path {
+            case "/youtube/v3/videos": popularRequests.increment()
+            case "/youtube/v3/subscriptions": subscriptionRequests.increment()
+            default: throw URLError(.unsupportedURL)
+            }
+            let payload = #"{"items":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let sessionID = UUID()
+        let client = YouTubeDataClient(
+            credentialProvider: {
+                YouTubeCredential(accessToken: "token", accountID: "account", sessionID: sessionID)
+            },
+            session: URLSession(configuration: configuration),
+            manualRefreshCooldown: 0
+        )
+
+        _ = try await client.popularVideos(regionCode: "JP")
+        _ = try await client.subscriptionUploadsPage(pageToken: nil)
+        _ = try await client.subscriptionUploadsPage(pageToken: nil, forceRefresh: true)
+        _ = try await client.popularVideos(regionCode: "JP")
+
+        XCTAssertEqual(popularRequests.value, 1)
         XCTAssertEqual(subscriptionRequests.value, 2)
+    }
+
+    func testRepeatedManualRefreshWithinCooldownUsesCachedPage() async throws {
+        let requestCount = LockedCounter()
+        URLProtocolStub.handler = { request in
+            requestCount.increment()
+            let payload = #"{"items":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = makeClient()
+
+        _ = try await client.subscriptionUploadsPage(pageToken: nil)
+        _ = try await client.subscriptionUploadsPage(pageToken: nil, forceRefresh: true)
+        _ = try await client.subscriptionUploadsPage(pageToken: nil, forceRefresh: true)
+
+        XCTAssertEqual(requestCount.value, 1)
     }
 
     func testChannelVideosUsesUploadsPlaylistAndReturnsPagedDetails() async throws {
@@ -344,10 +530,11 @@ final class YouTubeDataClientTests: XCTestCase {
     private func makeClient(token: String? = "test-token") -> YouTubeDataClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
+        let sessionID = UUID()
         return YouTubeDataClient(
             credentialProvider: {
                 token.map {
-                    YouTubeCredential(accessToken: $0, accountID: "test-account", sessionID: UUID())
+                    YouTubeCredential(accessToken: $0, accountID: "test-account", sessionID: sessionID)
                 }
             },
             session: URLSession(configuration: configuration)
@@ -484,6 +671,25 @@ private final class LockedCounter: @unchecked Sendable {
 
     var value: Int { lock.withLock { storage } }
     func increment() { lock.withLock { storage += 1 } }
+}
+
+private final class LockedConcurrencyTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeStorage = 0
+    private var peakStorage = 0
+
+    var peak: Int { lock.withLock { peakStorage } }
+
+    func begin() {
+        lock.withLock {
+            activeStorage += 1
+            peakStorage = max(peakStorage, activeStorage)
+        }
+    }
+
+    func end() {
+        lock.withLock { activeStorage -= 1 }
+    }
 }
 
 private final class URLProtocolStub: URLProtocol, @unchecked Sendable {

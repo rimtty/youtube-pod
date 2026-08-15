@@ -8,6 +8,10 @@ struct LibraryView: View {
     @State private var deletionTarget: SavedAudio?
     @State private var errorMessage: String?
 
+    var allowsOnlineActions = true
+    var closeOfflineLibrary: (() -> Void)?
+    var signIn: (() -> Void)?
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -54,17 +58,29 @@ struct LibraryView: View {
                     }
                 }
             }
-            .navigationTitle("ライブラリ")
+            .navigationTitle(allowsOnlineActions ? "ライブラリ" : "保存済みライブラリ")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("視聴回数を更新", systemImage: "arrow.clockwise") {
-                            Task { await refreshStatistics() }
-                        }
-                    } label: {
-                        Label("ライブラリの操作", systemImage: "ellipsis.circle")
+                if let closeOfflineLibrary {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("戻る", systemImage: "chevron.backward", action: closeOfflineLibrary)
                     }
-                    .disabled(audios.isEmpty)
+                }
+                if allowsOnlineActions {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button("視聴回数を更新", systemImage: "arrow.clockwise") {
+                                Task { await refreshStatistics() }
+                            }
+                        } label: {
+                            Label("ライブラリの操作", systemImage: "ellipsis.circle")
+                        }
+                        .disabled(audios.isEmpty)
+                    }
+                } else if let signIn {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Googleにログイン", systemImage: "person.crop.circle.badge.checkmark", action: signIn)
+                            .disabled(environment.auth.isWorking || !environment.auth.isConfigured)
+                    }
                 }
             }
             .alert("この音声を削除しますか？", isPresented: deletionPresented, presenting: deletionTarget) { audio in

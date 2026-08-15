@@ -22,10 +22,14 @@ struct AuthenticationRestoringView: View {
 struct AuthenticationView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @State private var isAnimatingWaveform = false
+
+    let savedAudioCount: Int
+    let openOfflineLibrary: () -> Void
 
     var body: some View {
         ZStack {
@@ -100,7 +104,11 @@ struct AuthenticationView: View {
         VStack(spacing: 20) {
             ZStack {
                 RoundedRectangle(cornerRadius: 42, style: .continuous)
-                    .fill(.white.opacity(0.76))
+                    .fill(
+                        reduceTransparency || colorScheme == .dark
+                            ? Color(.secondarySystemBackground)
+                            : .white.opacity(0.76)
+                    )
                     .strokeBorder(.white.opacity(0.84))
                     .shadow(color: PodPalette.sky.opacity(0.18), radius: 28, y: 15)
 
@@ -213,6 +221,22 @@ struct AuthenticationView: View {
             .tint(PodPalette.violet)
             .disabled(environment.auth.isWorking || !environment.auth.isConfigured)
 
+            if savedAudioCount > 0 {
+                Button(action: openOfflineLibrary) {
+                    Label(
+                        "保存済みの音声を開く（\(savedAudioCount)件）",
+                        systemImage: "headphones"
+                    )
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .tint(PodPalette.violet)
+                .accessibilityHint("Googleログインなしで端末内の音声を再生します")
+            }
+
             Text("youtube.readonly 権限のみを使用します")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -247,7 +271,7 @@ private struct ListeningWaveform: View {
                 : nil,
             value: isAnimating
         )
-        .accessibilityLabel("音声波形")
+        .accessibilityHidden(true)
     }
 }
 
