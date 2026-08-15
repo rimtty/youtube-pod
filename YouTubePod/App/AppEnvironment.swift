@@ -12,6 +12,12 @@ final class AppEnvironment {
     let player: AudioPlayerService
 
     init(modelContext: ModelContext) {
+        // A force quit or process termination can happen after yt-dlp created
+        // its working directory but before the normal defer cleanup runs.
+        // No extraction is active while the environment is being assembled,
+        // so directories from the previous process are safe to remove here.
+        PythonAudioExtractor.removeStaleWorkingDirectories()
+
         let auth = GoogleAuthService()
         let library = AudioLibraryService(modelContext: modelContext)
         self.auth = auth

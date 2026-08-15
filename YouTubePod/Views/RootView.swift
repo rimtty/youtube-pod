@@ -81,52 +81,69 @@ struct RootView: View {
             }
     }
 
-    @ViewBuilder
     private var tabViewWithOptionalMiniPlayer: some View {
-        if let item = environment.player.currentItem {
-            tabs
-                .tabViewBottomAccessory {
-                    MiniPlayerView(
-                        item: item,
-                        isPlaying: environment.player.isPlaying,
-                        progress: playbackProgress,
-                        togglePlayback: environment.player.togglePlayback,
-                        seek: environment.player.seek,
-                        showPlayer: { showsPlayer = true }
-                    )
-                }
-                .tabBarMinimizeBehavior(.onScrollDown)
-        } else {
-            tabs
-                .tabBarMinimizeBehavior(.onScrollDown)
-        }
+        tabs
+            .tabBarMinimizeBehavior(.onScrollDown)
     }
 
     private var tabs: some View {
         TabView(selection: $selectedTab) {
             Tab("ホーム", systemImage: "sparkles", value: .home) {
-                HomeView(
-                    phaseForVideo: phase,
-                    onDownload: startDownload,
-                    onCancel: cancelDownload,
-                    showAccount: { showsAccount = true }
-                )
+                tabContent {
+                    HomeView(
+                        phaseForVideo: phase,
+                        onDownload: startDownload,
+                        onCancel: cancelDownload,
+                        showAccount: { showsAccount = true }
+                    )
+                }
             }
 
             Tab("登録チャンネル", systemImage: "rectangle.stack.badge.person.crop", value: .subscriptions) {
-                SubscriptionsView(
-                    phaseForVideo: phase,
-                    onDownload: startDownload,
-                    onCancel: cancelDownload
-                )
+                tabContent {
+                    SubscriptionsView(
+                        phaseForVideo: phase,
+                        onDownload: startDownload,
+                        onCancel: cancelDownload
+                    )
+                }
             }
 
             Tab("ライブラリ", systemImage: "headphones", value: .library) {
-                LibraryView()
+                tabContent {
+                    LibraryView()
+                }
             }
             .badge(unplayedAudioCount)
         }
         .tint(PodPalette.raspberry)
+    }
+
+    private func tabContent<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .safeAreaInset(edge: .bottom, spacing: 8) {
+                miniPlayer
+            }
+            .animation(.smooth, value: environment.player.currentItem?.id)
+    }
+
+    @ViewBuilder
+    private var miniPlayer: some View {
+        if let item = environment.player.currentItem {
+            MiniPlayerView(
+                item: item,
+                isPlaying: environment.player.isPlaying,
+                progress: playbackProgress,
+                togglePlayback: environment.player.togglePlayback,
+                seek: environment.player.seek,
+                showPlayer: { showsPlayer = true }
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     private var playbackProgress: Double {

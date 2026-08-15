@@ -11,12 +11,14 @@
 ## 現在の自動検証結果（2026-08-16）
 
 - Xcode 27.0 / Apple Swift 6.4 / iOS 27.0 Simulator
-- Debug全テスト: 60件、失敗0件（未指定の実動画ケース3件はスキップ）
-- 通常公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
+- Debug全テスト: 64件、失敗0件
+- 通常公開動画、Shorts、30分超の公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
+- 長尺取得の途中キャンセル、追加リトライ、起動時の残存一時フォルダ清掃を確認
+- `yt-dlp-ejs 0.8.0`を固定同梱し、実行時ダウンロードなしでWebKit JavaScriptチャレンジ処理を確認
 - Release / generic iOS Simulator: ビルド成功
 - iPhone 16 Pro Max向け開発署名ビルド: ビルド・インストール・起動成功
 
-`./scripts/verify.sh` は通常回帰テスト、`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+`./scripts/verify.sh` は通常回帰テスト（実動画4件はスキップ）、`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 
 ## iOS 27実機の合格条件
 

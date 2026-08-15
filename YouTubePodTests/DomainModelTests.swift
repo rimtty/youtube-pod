@@ -6,6 +6,7 @@ final class DomainModelTests: XCTestCase {
         XCTAssertTrue(DownloadPhase.queued.isActive)
         XCTAssertTrue(DownloadPhase.downloading(0).isActive)
         XCTAssertTrue(DownloadPhase.downloading(0.5).isActive)
+        XCTAssertTrue(DownloadPhase.retrying(attempt: 1, maximumRetries: 3).isActive)
         XCTAssertTrue(DownloadPhase.validating.isActive)
         XCTAssertFalse(DownloadPhase.completed.isActive)
         XCTAssertFalse(DownloadPhase.failed("network").isActive)

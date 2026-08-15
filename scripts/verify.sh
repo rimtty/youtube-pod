@@ -11,6 +11,11 @@ if [[ ! -x "$XCODEGEN" ]]; then
     exit 1
 fi
 
+if [[ ! -f "$PROJECT_ROOT/PythonRuntime/site-packages/yt_dlp_ejs/yt/solver/core.min.js" ]]; then
+    print -u2 "Bundled yt-dlp-ejs is missing. Run ./scripts/bootstrap.sh before verification."
+    exit 1
+fi
+
 cd "$PROJECT_ROOT"
 python3 -c 'compile(open("PythonRuntime/download_audio.py", encoding="utf-8").read(), "PythonRuntime/download_audio.py", "exec")'
 

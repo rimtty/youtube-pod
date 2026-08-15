@@ -457,6 +457,27 @@ final class AudioExtractionIntegrationTests: XCTestCase {
     }
 }
 
+final class PythonAudioExtractorCleanupTests: XCTestCase {
+    func testStartupCleanupRemovesOnlyExtractionWorkingDirectories() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+        let extractionDirectory = temporaryDirectory
+            .appendingPathComponent("YouTubePod-\(UUID().uuidString)", isDirectory: true)
+        let unrelatedDirectory = temporaryDirectory
+            .appendingPathComponent("YouTubePod-LibraryTest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: extractionDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: unrelatedDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: extractionDirectory)
+            try? FileManager.default.removeItem(at: unrelatedDirectory)
+        }
+
+        PythonAudioExtractor.removeStaleWorkingDirectories()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: extractionDirectory.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedDirectory.path))
+    }
+}
+
 private final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = 0

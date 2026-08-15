@@ -9,9 +9,10 @@ struct MiniPlayerView: View {
     let showPlayer: () -> Void
 
     @State private var scrubProgress: Double?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 7) {
             HStack(spacing: 10) {
                 Button(action: showPlayer) {
                     HStack(spacing: 10) {
@@ -25,7 +26,7 @@ struct MiniPlayerView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                        Spacer(minLength: 4)
+                        Spacer(minLength: 2)
                     }
                     .contentShape(Rectangle())
                 }
@@ -35,8 +36,9 @@ struct MiniPlayerView: View {
 
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title3.bold())
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 17, weight: .bold))
+                        .frame(width: 40, height: 40)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(isPlaying ? "一時停止" : "再生")
@@ -50,21 +52,34 @@ struct MiniPlayerView: View {
                     scrubProgress = nil
                 }
             )
-            .padding(.leading, 50)
-            .padding(.trailing, 46)
+            .padding(.horizontal, 10)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 4)
-        .padding(.bottom, 2)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            reduceTransparency
+                ? AnyShapeStyle(Color(.secondarySystemBackground))
+                : AnyShapeStyle(.regularMaterial),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 12, y: 5)
         .onChange(of: item.id) {
             scrubProgress = nil
         }
     }
 
     private var artwork: some View {
-        PodArtworkImage(url: item.artworkURL)
-        .frame(width: 40, height: 40)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        ZStack {
+            Color.black.opacity(0.16)
+            PodArtworkImage(url: item.artworkURL, contentMode: .fit)
+        }
+        .frame(width: 50, height: 32)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
     private var normalizedProgress: Double {
@@ -106,7 +121,8 @@ private struct MiniPlaybackScrubber: View {
                     }
             )
         }
-        .frame(height: 14)
+        // Keep the track visually compact while providing a generous drag target.
+        .frame(height: 18)
         .accessibilityElement()
         .accessibilityLabel("ミニプレイヤーの再生位置")
         .accessibilityValue("\(Int((normalizedValue * 100).rounded()))パーセント")

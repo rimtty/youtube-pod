@@ -47,17 +47,15 @@ final class DownloadManagerTests: XCTestCase {
         XCTAssertTrue(library.importedVideoIDs.isEmpty)
     }
 
-    func testFailedDownloadCanBeManuallyRetriedAndCompleted() async throws {
+    func testTransientFailureIsAutomaticallyRetriedAndCompleted() async throws {
         let extractor = FailOnceExtractor()
         let library = LibraryStub()
-        let manager = DownloadManager(extractor: extractor, library: library)
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: library,
+            extractionRetryDelays: [.zero, .zero, .zero]
+        )
         let item = video(id: "eeeeeeeeeee")
-
-        manager.enqueue(item)
-        try await waitUntil {
-            if case .failed = manager.phases[item.id] { return true }
-            return false
-        }
 
         manager.enqueue(item)
         try await waitUntil { manager.phases[item.id] == .completed }
@@ -65,6 +63,65 @@ final class DownloadManagerTests: XCTestCase {
         let attempts = await extractor.attempts
         XCTAssertEqual(attempts, 2)
         XCTAssertEqual(library.importedVideoIDs, [item.id])
+    }
+
+    func testTransientFailureStopsAfterThreeAdditionalRetries() async throws {
+        let extractor = AlwaysFailingExtractor(message: "HTTP Error 403: Forbidden")
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: LibraryStub(),
+            extractionRetryDelays: [.zero, .zero, .zero]
+        )
+        let item = video(id: "eeeeeeeeee1")
+
+        manager.enqueue(item)
+        try await waitUntil {
+            if case .failed = manager.phases[item.id] { return true }
+            return false
+        }
+
+        let attempts = await extractor.attempts
+        XCTAssertEqual(attempts, 4)
+    }
+
+    func testPermanentExtractionFailureIsNotAutomaticallyRetried() async throws {
+        let extractor = AlwaysFailingExtractor(message: "Requested format is not available")
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: LibraryStub(),
+            extractionRetryDelays: [.zero, .zero, .zero]
+        )
+        let item = video(id: "eeeeeeeeee2")
+
+        manager.enqueue(item)
+        try await waitUntil {
+            if case .failed = manager.phases[item.id] { return true }
+            return false
+        }
+
+        let attempts = await extractor.attempts
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testCancellationDuringRetryDelayPreventsAnotherAttempt() async throws {
+        let extractor = AlwaysFailingExtractor(message: "一時的な通信エラー")
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: LibraryStub(),
+            extractionRetryDelays: [.seconds(5)]
+        )
+        let item = video(id: "eeeeeeeeee3")
+
+        manager.enqueue(item)
+        try await waitUntil {
+            if case .retrying = manager.phases[item.id] { return true }
+            return false
+        }
+        await manager.cancel(videoID: item.id)
+        try await waitUntil { manager.phases[item.id] == .failed("キャンセルしました") }
+
+        let attempts = await extractor.attempts
+        XCTAssertEqual(attempts, 1)
     }
 
     func testCancellingDuringValidationDeletesImportedResult() async throws {
@@ -196,6 +253,25 @@ private actor FailOnceExtractor: AudioExtracting {
             duration: 10,
             thumbnailURL: nil
         )
+    }
+
+    func cancel() async {}
+}
+
+private actor AlwaysFailingExtractor: AudioExtracting {
+    private let message: String
+    private(set) var attempts = 0
+
+    init(message: String) {
+        self.message = message
+    }
+
+    func extract(
+        from url: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ExtractedAudio {
+        attempts += 1
+        throw ExtractionError.failed(message)
     }
 
     func cancel() async {}

@@ -111,13 +111,14 @@ struct ExtractedAudio: Sendable {
 enum DownloadPhase: Equatable, Sendable {
     case queued
     case downloading(Double)
+    case retrying(attempt: Int, maximumRetries: Int)
     case validating
     case completed
     case failed(String)
 
     var isActive: Bool {
         switch self {
-        case .queued, .downloading, .validating: true
+        case .queued, .downloading, .retrying, .validating: true
         case .completed, .failed: false
         }
     }
