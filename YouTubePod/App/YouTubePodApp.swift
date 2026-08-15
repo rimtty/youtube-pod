@@ -12,7 +12,15 @@ struct YouTubePodApp: App {
         PythonRuntimeBootstrap.configure()
         PythonRuntimeBootstrap.prepareInterpreter()
         do {
-            let container = try ModelContainer(for: SavedAudio.self)
+            // The released PoC store was created before a VersionedSchema was
+            // introduced. Opening that store with a staged migration marks it
+            // as an unknown model version. Adding the independent transfer
+            // entity through SwiftData's inferred lightweight migration keeps
+            // the existing library and playback history intact.
+            let container = try ModelContainer(
+                for: SavedAudio.self,
+                WatchTransferRecord.self
+            )
             self.container = container
             _environment = State(initialValue: AppEnvironment(modelContext: container.mainContext))
         } catch {

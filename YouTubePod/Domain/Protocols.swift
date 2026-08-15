@@ -38,3 +38,14 @@ protocol AudioPlaying: AnyObject {
     func next()
     func previous()
 }
+
+@MainActor
+protocol WatchTransferManaging: AnyObject {
+    var connectionStatus: WatchConnectionStatus { get }
+    var liveProgress: [String: Double] { get }
+
+    func start()
+    func enqueue(_ source: WatchTransferSource) async throws
+    func cancel(videoID: String)
+    func retry(videoID: String) async throws
+}

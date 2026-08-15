@@ -10,6 +10,7 @@ final class AppEnvironment {
     let library: AudioLibraryService
     let downloads: DownloadManager
     let player: AudioPlayerService
+    let watchTransfers: PhoneWatchTransferService
 
     init(modelContext: ModelContext) {
         // A force quit or process termination can happen after yt-dlp created
@@ -35,9 +36,15 @@ final class AppEnvironment {
             }
         )
         self.downloads = DownloadManager(extractor: PythonAudioExtractor(), library: library)
+        self.watchTransfers = PhoneWatchTransferService(
+            modelContext: modelContext,
+            transport: WCSessionAdapter(),
+            snapshots: WatchTransferSnapshotStore()
+        )
     }
 
     func start() async {
+        watchTransfers.start()
         await auth.restore()
         player.configureAudioSession()
     }
