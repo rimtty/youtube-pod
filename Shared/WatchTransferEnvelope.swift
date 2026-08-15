@@ -11,6 +11,16 @@ enum WatchTransferAcknowledgementOutcome: String, Codable, Sendable {
     case deleted
 }
 
+enum WatchTransferAcknowledgementErrorCode: String, Codable, Sendable {
+    case capacityInsufficient
+    case invalidAudio
+    case containsVideo
+    case sizeMismatch
+    case staleRevision
+    case persistenceFailure
+    case stagingFailure
+}
+
 enum WatchTransferProtocolError: Error, Equatable, LocalizedError, Sendable {
     case missingEnvelope
     case unsupportedSchema(Int)
@@ -164,6 +174,7 @@ struct WatchTransferAcknowledgement: Codable, Equatable, Sendable {
     let revision: Int64
     let youtubeID: String
     let outcome: WatchTransferAcknowledgementOutcome
+    let errorCode: WatchTransferAcknowledgementErrorCode?
     let message: String?
 
     init(
@@ -172,6 +183,7 @@ struct WatchTransferAcknowledgement: Codable, Equatable, Sendable {
         revision: Int64,
         youtubeID: String,
         outcome: WatchTransferAcknowledgementOutcome,
+        errorCode: WatchTransferAcknowledgementErrorCode? = nil,
         message: String? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -179,6 +191,7 @@ struct WatchTransferAcknowledgement: Codable, Equatable, Sendable {
         self.revision = revision
         self.youtubeID = youtubeID
         self.outcome = outcome
+        self.errorCode = errorCode
         self.message = message
     }
 
@@ -217,26 +230,138 @@ struct WatchTransferAcknowledgement: Codable, Equatable, Sendable {
 
 struct WatchInventoryEntry: Codable, Equatable, Sendable {
     let youtubeID: String
+    let transferID: UUID
     let revision: Int64
     let fileSize: Int64
 }
 
 struct WatchInventorySnapshot: Codable, Equatable, Sendable {
+    static let applicationContextKey = "com.rimtty.YouTubePod.watchInventory"
+
     let schemaVersion: Int
+    let libraryInstanceID: UUID
+    let generation: Int64
     let generatedAt: Date
     let availableCapacity: Int64?
     let entries: [WatchInventoryEntry]
 
     init(
         schemaVersion: Int = WatchTransferEnvelope.currentSchemaVersion,
+        libraryInstanceID: UUID,
+        generation: Int64,
         generatedAt: Date,
         availableCapacity: Int64?,
         entries: [WatchInventoryEntry]
     ) {
         self.schemaVersion = schemaVersion
+        self.libraryInstanceID = libraryInstanceID
+        self.generation = generation
         self.generatedAt = generatedAt
         self.availableCapacity = availableCapacity
         self.entries = entries
+    }
+
+    func validated() throws -> Self {
+        guard schemaVersion == WatchTransferEnvelope.currentSchemaVersion else {
+            throw WatchTransferProtocolError.unsupportedSchema(schemaVersion)
+        }
+        guard libraryInstanceID != UUID.nil, generation >= 0 else {
+            throw WatchTransferProtocolError.malformedPayload
+        }
+        if let availableCapacity, availableCapacity < 0 {
+            throw WatchTransferProtocolError.invalidFileSize
+        }
+        for entry in entries {
+            try validateYouTubeID(entry.youtubeID)
+            guard entry.transferID != UUID.nil,
+                  entry.revision >= 0,
+                  entry.fileSize >= 0 else {
+                throw WatchTransferProtocolError.malformedPayload
+            }
+        }
+        return self
+    }
+
+    func applicationContext() throws -> [String: Any] {
+        _ = try validated()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        return [Self.applicationContextKey: try encoder.encode(self)]
+    }
+
+    static func decode(applicationContext: [String: Any]) throws -> Self {
+        guard let payload = applicationContext[applicationContextKey] as? Data else {
+            throw WatchTransferProtocolError.missingEnvelope
+        }
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .millisecondsSince1970
+            return try decoder.decode(Self.self, from: payload).validated()
+        } catch let error as WatchTransferProtocolError {
+            throw error
+        } catch {
+            throw WatchTransferProtocolError.malformedPayload
+        }
+    }
+}
+
+enum WatchLibraryCommandKind: String, Codable, Sendable {
+    case delete
+}
+
+struct WatchLibraryCommand: Codable, Equatable, Sendable {
+    static let userInfoKey = "com.rimtty.YouTubePod.watchLibraryCommand"
+
+    let schemaVersion: Int
+    let commandID: UUID
+    let kind: WatchLibraryCommandKind
+    let youtubeID: String
+    let revision: Int64
+
+    init(
+        schemaVersion: Int = WatchTransferEnvelope.currentSchemaVersion,
+        commandID: UUID,
+        kind: WatchLibraryCommandKind,
+        youtubeID: String,
+        revision: Int64
+    ) {
+        self.schemaVersion = schemaVersion
+        self.commandID = commandID
+        self.kind = kind
+        self.youtubeID = youtubeID
+        self.revision = revision
+    }
+
+    func validated() throws -> Self {
+        guard schemaVersion == WatchTransferEnvelope.currentSchemaVersion else {
+            throw WatchTransferProtocolError.unsupportedSchema(schemaVersion)
+        }
+        guard commandID != UUID.nil else {
+            throw WatchTransferProtocolError.invalidTransferID
+        }
+        try validateYouTubeID(youtubeID)
+        guard revision >= 0 else {
+            throw WatchTransferProtocolError.invalidRevision
+        }
+        return self
+    }
+
+    func userInfo() throws -> [String: Any] {
+        _ = try validated()
+        return [Self.userInfoKey: try JSONEncoder().encode(self)]
+    }
+
+    static func decode(userInfo: [String: Any]) throws -> Self {
+        guard let payload = userInfo[userInfoKey] as? Data else {
+            throw WatchTransferProtocolError.missingEnvelope
+        }
+        do {
+            return try JSONDecoder().decode(Self.self, from: payload).validated()
+        } catch let error as WatchTransferProtocolError {
+            throw error
+        } catch {
+            throw WatchTransferProtocolError.malformedPayload
+        }
     }
 }
 
