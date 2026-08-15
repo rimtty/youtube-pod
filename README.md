@@ -45,7 +45,7 @@ Pull to Refreshの成功後60秒間は同じページを再通信せず、直前
 ./scripts/verify.sh
 ```
 
-Apple Watch Series 9（45mm）/ watchOS 27 Simulatorの回帰テスト:
+Apple Watch Series 9以降 / watchOS 27 Simulatorの回帰テスト（Series 9を優先）:
 
 ```sh
 ./scripts/verify_watch.sh

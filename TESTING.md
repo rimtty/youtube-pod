@@ -29,7 +29,7 @@
 - watchOS 27 / Apple Watch Series 9（45mm）Simulator: Watchアプリのビルド、iPhoneアプリへの埋め込み、起動に成功
 - Watch転送envelopeのencode/decode、schema不一致、破損payload、不正値、再生位置clamp: 6件、失敗0件
 
-`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はApple Watch Series 9 Simulatorの回帰テストを実行する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`は利用可能なApple Watch Series 9以降のSimulator（Series 9を優先）で回帰テストを実行する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 
 ## Apple Watch実機の合格条件（Simulatorでは検証不可）
 
