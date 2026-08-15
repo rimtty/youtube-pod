@@ -61,6 +61,37 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertEqual(invalidatedVideoIDs, ["receiver008"])
     }
 
+    func testArtworkCapacityFailureDoesNotBlockAudioImportOrEmitFailedAcknowledgement() async throws {
+        let fixture = try makeFixture(
+            capacityChecker: SelectiveReceiverCapacityChecker(rejectedSize: 8)
+        )
+        let transferID = UUID()
+        _ = try stageArtwork(
+            with: fixture.stager,
+            videoID: "receiver009",
+            transferID: transferID,
+            revision: 1
+        )
+
+        fixture.receiver.start()
+        await waitUntil { (try? fixture.stager.listStagedFiles().isEmpty) == true }
+        XCTAssertTrue(fixture.peer.acknowledgements.isEmpty)
+
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver009",
+            transferID: transferID,
+            revision: 1
+        )
+        await fixture.receiver.synchronizeNow()
+
+        XCTAssertEqual(fixture.peer.acknowledgements.count, 1)
+        XCTAssertEqual(fixture.peer.acknowledgements.first?.outcome, .imported)
+        XCTAssertEqual(fixture.peer.inventories.last?.entries.count, 1)
+        XCTAssertNil(fetch(WatchSavedAudio.self, fixture.context).first?.thumbnailRelativePath)
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+    }
+
     func testUnsentAcknowledgementRemainsDurableAndRetriesOnActivation() async throws {
         let fixture = try makeFixture()
         fixture.peer.shouldFailAcknowledgements = true
@@ -194,6 +225,7 @@ final class WatchSessionReceiverTests: XCTestCase {
     }
 
     private func makeFixture(
+        capacityChecker: any WatchCapacityChecking = ReceiverCapacityChecker(),
         invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in }
     ) throws -> ReceiverFixture {
         let container = try ModelContainer(
@@ -209,7 +241,7 @@ final class WatchSessionReceiverTests: XCTestCase {
         let service = WatchAudioLibraryService(
             modelContext: container.mainContext,
             validator: ReceiverAudioValidator(),
-            capacityChecker: ReceiverCapacityChecker(),
+            capacityChecker: capacityChecker,
             rootURL: libraryURL,
             minimumCapacityReserve: 0
         )
@@ -244,6 +276,31 @@ final class WatchSessionReceiverTests: XCTestCase {
             transferID: transferID,
             revision: revision,
             fileKind: .audio,
+            youtubeID: videoID,
+            title: "Receiver title",
+            channel: "Receiver channel",
+            publishedAt: nil,
+            viewCount: 12,
+            duration: 90,
+            fileSize: Int64(data.count),
+            playbackPosition: 9
+        )
+        return try stager.stage(fileAt: sourceURL, metadata: envelope.metadata())
+    }
+
+    private func stageArtwork(
+        with stager: WatchIncomingFileStager,
+        videoID: String,
+        transferID: UUID,
+        revision: Int64
+    ) throws -> StagedWatchTransferFile {
+        let sourceURL = temporaryRoot.appendingPathComponent("artwork-\(UUID().uuidString).jpg")
+        let data = Data(repeating: 0x42, count: 8)
+        try data.write(to: sourceURL)
+        let envelope = WatchTransferEnvelope(
+            transferID: transferID,
+            revision: revision,
+            fileKind: .artwork,
             youtubeID: videoID,
             title: "Receiver title",
             channel: "Receiver channel",
@@ -298,6 +355,23 @@ private struct ReceiverCapacityChecker: WatchCapacityChecking {
         stagedFileSize: Int64,
         minimumReserve: Int64
     ) async throws {}
+}
+
+private struct SelectiveReceiverCapacityChecker: WatchCapacityChecking {
+    let rejectedSize: Int64
+
+    func ensureImportCapacity(
+        at libraryURL: URL,
+        stagedFileSize: Int64,
+        minimumReserve: Int64
+    ) async throws {
+        if stagedFileSize == rejectedSize {
+            throw WatchCapacityError.insufficientStorage(
+                requiredReserve: minimumReserve,
+                available: 0
+            )
+        }
+    }
 }
 
 @MainActor

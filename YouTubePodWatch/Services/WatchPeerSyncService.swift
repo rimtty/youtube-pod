@@ -74,17 +74,13 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
             }
         } catch {
             // The callback URL cannot outlive this method. If metadata still
-            // identifies the transfer, enqueue a durable failure immediately;
-            // malformed metadata has no safe peer identity to acknowledge.
-            guard let envelope = try? WatchTransferEnvelope.decode(metadata: file.metadata ?? [:]),
-                  let userInfo = try? WatchTransferAcknowledgement(
-                    transferID: envelope.transferID,
-                    revision: envelope.revision,
-                    youtubeID: envelope.youtubeID,
-                    outcome: .failed,
-                    errorCode: .stagingFailure,
-                    message: error.localizedDescription
-                  ).userInfo() else { return }
+            // identifies an audio transfer, enqueue a durable failure
+            // immediately. Artwork is optional and malformed metadata has no
+            // safe peer identity to acknowledge.
+            guard let userInfo = Self.stagingFailureUserInfo(
+                metadata: file.metadata ?? [:],
+                message: error.localizedDescription
+            ) else { return }
             session.transferUserInfo(userInfo)
         }
     }
@@ -113,6 +109,22 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
                   ).userInfo() else { return }
             session.transferUserInfo(acknowledgement)
         }
+    }
+
+    nonisolated static func stagingFailureUserInfo(
+        metadata: [String: Any],
+        message: String
+    ) -> [String: Any]? {
+        guard let envelope = try? WatchTransferEnvelope.decode(metadata: metadata),
+              envelope.fileKind == .audio else { return nil }
+        return try? WatchTransferAcknowledgement(
+            transferID: envelope.transferID,
+            revision: envelope.revision,
+            youtubeID: envelope.youtubeID,
+            outcome: .failed,
+            errorCode: .stagingFailure,
+            message: message
+        ).userInfo()
     }
 }
 

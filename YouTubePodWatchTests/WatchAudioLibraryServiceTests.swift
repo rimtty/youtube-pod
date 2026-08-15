@@ -242,6 +242,106 @@ final class WatchAudioLibraryServiceTests: XCTestCase {
         )
     }
 
+    func testArtworkCapacityFailureIsDiscardedWithoutFailureAcknowledgement() async throws {
+        let fixture = try makeFixture(capacityChecker: RejectingCapacityChecker())
+        let artwork = try makeStaged(
+            videoID: "artcapacity",
+            transferID: UUID(),
+            revision: 1,
+            kind: .artwork
+        )
+
+        let result = await fixture.service.importStagedFile(artwork)
+
+        XCTAssertEqual(result, .artworkDiscarded(.capacityInsufficient))
+        XCTAssertTrue(fetch(WatchPendingAcknowledgement.self, fixture.context).isEmpty)
+        XCTAssertTrue(fetch(WatchSavedAudio.self, fixture.context).isEmpty)
+    }
+
+    func testArtworkPersistenceFailureKeepsAudioAndEmitsNoFailedAcknowledgement() async throws {
+        let fixture = try makeFixture()
+        let transferID = UUID()
+        let audio = try makeStaged(
+            videoID: "artpersist1",
+            transferID: transferID,
+            revision: 1,
+            kind: .audio
+        )
+        let audioResult = await fixture.service.importStagedFile(audio)
+        XCTAssertEqual(audioResult, .imported)
+        let acknowledgementCount = fetch(WatchPendingAcknowledgement.self, fixture.context).count
+        let saveController = SaveFailureController(failures: 1)
+        let failingService = WatchAudioLibraryService(
+            modelContext: fixture.context,
+            validator: PassthroughAudioValidator(),
+            capacityChecker: AllowingCapacityChecker(),
+            rootURL: fixture.rootURL,
+            minimumCapacityReserve: 0,
+            saveChanges: { try saveController.save($0) }
+        )
+        let artwork = try makeStaged(
+            videoID: "artpersist1",
+            transferID: transferID,
+            revision: 1,
+            kind: .artwork
+        )
+
+        let result = await failingService.importStagedFile(artwork)
+
+        XCTAssertEqual(result, .artworkDiscarded(.persistenceFailure))
+        let saved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        XCTAssertNil(saved.thumbnailRelativePath)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: fixture.rootURL.appendingPathComponent(saved.audioRelativePath).path
+        ))
+        XCTAssertEqual(
+            fetch(WatchPendingAcknowledgement.self, fixture.context).count,
+            acknowledgementCount
+        )
+    }
+
+    func testPendingArtworkCopyFailureStillImportsAudioWithoutArtwork() async throws {
+        let fixture = try makeFixture()
+        let transferID = UUID()
+        let artwork = try makeStaged(
+            videoID: "artcopyfail",
+            transferID: transferID,
+            revision: 1,
+            kind: .artwork
+        )
+        let artworkResult = await fixture.service.importStagedFile(artwork)
+        XCTAssertEqual(artworkResult, .artworkPending)
+        let blockedArtworkURL = fixture.rootURL
+            .appendingPathComponent("Artwork/\(transferID.uuidString).jpg", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: blockedArtworkURL,
+            withIntermediateDirectories: true
+        )
+        let audio = try makeStaged(
+            videoID: "artcopyfail",
+            transferID: transferID,
+            revision: 1,
+            kind: .audio
+        )
+
+        let result = await fixture.service.importStagedFile(audio)
+
+        XCTAssertEqual(result, .imported)
+        let saved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        XCTAssertNil(saved.thumbnailRelativePath)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: fixture.rootURL.appendingPathComponent(saved.audioRelativePath).path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.rootURL
+                .appendingPathComponent("PendingArtwork/\(transferID.uuidString).jpg").path
+        ))
+        let acknowledgements = fetch(WatchPendingAcknowledgement.self, fixture.context)
+            .filter { $0.transferID == transferID }
+        XCTAssertEqual(acknowledgements.count, 1)
+        XCTAssertEqual(acknowledgements.first?.outcome, .imported)
+    }
+
     func testArtworkMayArriveBeforeOrAfterAudio() async throws {
         let fixture = try makeFixture()
 

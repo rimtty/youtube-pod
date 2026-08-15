@@ -193,23 +193,84 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertTrue(record.artworkDeliveryFinished)
     }
 
-    func testProgressFromSecondFileCannotMoveVisibleProgressBackward() async throws {
+    func testArtworkEnqueueFailureDoesNotCancelOrFailAudioTransfer() async throws {
+        let fixture = try makeFixture()
+        fixture.transport.enqueueFailureKinds = [.artwork]
+        let source = try makeSource(id: "artenqueue1", artwork: true)
+
+        try await fixture.service.enqueue(source)
+
+        let audio = try XCTUnwrap(fixture.transport.sent.first?.envelope)
+        XCTAssertEqual(fixture.transport.sent.map(\.envelope.fileKind), [.audio])
+        XCTAssertTrue(fixture.transport.cancelledTransferIDs.isEmpty)
+        let transferring = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        XCTAssertEqual(transferring.state, .transferring)
+        XCTAssertFalse(transferring.senderFailed)
+        XCTAssertFalse(transferring.audioDeliveryFinished)
+        XCTAssertTrue(transferring.artworkDeliveryFinished)
+        XCTAssertEqual(transferring.lastErrorCode, "artwork.enqueue")
+
+        fixture.transport.emit(.fileFinished(
+            WatchTransferKey(transferID: audio.transferID, fileKind: .audio),
+            nil
+        ))
+        fixture.transport.emit(.acknowledgement(WatchTransferAcknowledgement(
+            transferID: audio.transferID,
+            revision: audio.revision,
+            youtubeID: audio.youtubeID,
+            outcome: .imported
+        )))
+
+        XCTAssertEqual(record(source.youtubeID, in: fixture.context)?.state, .availableOnWatch)
+    }
+
+    func testArtworkProgressCannotOverstateAudioProgress() async throws {
         let fixture = try makeFixture()
         let source = try makeSource(id: "transfer009", artwork: true)
         try await fixture.service.enqueue(source)
         let transferID = try XCTUnwrap(fixture.transport.sent.first?.envelope.transferID)
 
         fixture.transport.emit(.progress(
+            WatchTransferKey(transferID: transferID, fileKind: .artwork),
+            1
+        ))
+        XCTAssertNil(fixture.service.liveProgress[source.youtubeID])
+        XCTAssertEqual(fetchRecords(fixture.context).first?.lastKnownProgress, 0)
+
+        fixture.transport.emit(.progress(
             WatchTransferKey(transferID: transferID, fileKind: .audio),
-            0.8
+            0.25
         ))
         fixture.transport.emit(.progress(
             WatchTransferKey(transferID: transferID, fileKind: .artwork),
-            0.1
+            1
         ))
 
-        XCTAssertEqual(fixture.service.liveProgress[source.youtubeID], 0.8)
-        XCTAssertEqual(fetchRecords(fixture.context).first?.lastKnownProgress, 0.8)
+        XCTAssertEqual(fixture.service.liveProgress[source.youtubeID], 0.25)
+        XCTAssertEqual(fetchRecords(fixture.context).first?.lastKnownProgress, 0.25)
+    }
+
+    func testAudioCompletionSetsPrimaryProgressToOneWhileArtworkIsPending() async throws {
+        let fixture = try makeFixture()
+        let source = try makeSource(id: "audioprim01", artwork: true)
+        try await fixture.service.enqueue(source)
+        let transferID = try XCTUnwrap(fixture.transport.sent.first?.envelope.transferID)
+
+        fixture.transport.emit(.progress(
+            WatchTransferKey(transferID: transferID, fileKind: .audio),
+            0.4
+        ))
+        fixture.transport.emit(.fileFinished(
+            WatchTransferKey(transferID: transferID, fileKind: .audio),
+            nil
+        ))
+
+        let record = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        XCTAssertEqual(record.state, .transferring)
+        XCTAssertTrue(record.audioDeliveryFinished)
+        XCTAssertFalse(record.artworkDeliveryFinished)
+        XCTAssertEqual(record.lastKnownProgress, 1)
+        XCTAssertEqual(fixture.service.liveProgress[source.youtubeID], 1)
     }
 
     func testRetryableFailuresAutomaticallyRetryAtMostTwice() async throws {
@@ -462,6 +523,44 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         try await waitUntil { fixture.service.liveProgress[source.youtubeID] == 0.4 }
 
         XCTAssertEqual(record(source.youtubeID, in: fixture.context)?.state, .transferring)
+    }
+
+    func testActivationUsesOutstandingAudioProgressInsteadOfArtworkMaximum() async throws {
+        let fixture = try makeFixture(start: false)
+        let source = try makeSource(id: "restartart1", artwork: true)
+        let transferID = UUID()
+        let persisted = WatchTransferRecord(
+            youtubeID: source.youtubeID,
+            title: source.title,
+            channelTitle: source.channelTitle,
+            publishedAt: source.publishedAt,
+            duration: source.duration,
+            savedViewCount: source.savedViewCount,
+            sourceFileSize: 64,
+            transferID: transferID,
+            revision: 1,
+            state: .transferring,
+            artworkExpected: true
+        )
+        fixture.context.insert(persisted)
+        try fixture.context.save()
+        fixture.transport.outstanding = [
+            OutstandingWatchFile(
+                key: WatchTransferKey(transferID: transferID, fileKind: .audio),
+                fileURL: source.audioURL,
+                progress: 0.35
+            ),
+            OutstandingWatchFile(
+                key: WatchTransferKey(transferID: transferID, fileKind: .artwork),
+                fileURL: try XCTUnwrap(source.artworkURL),
+                progress: 1
+            )
+        ]
+
+        fixture.service.start()
+        try await waitUntil { fixture.service.liveProgress[source.youtubeID] == 0.35 }
+
+        XCTAssertEqual(record(source.youtubeID, in: fixture.context)?.lastKnownProgress, 0.35)
     }
 
     func testActivationMarksLostPersistedTransferForReconciliation() async throws {
@@ -1058,6 +1157,7 @@ private final class WatchTransportStub: WatchConnectivityTransport {
     private(set) var cancelledTransferIDs: [UUID] = []
     private(set) var deletionCommands: [WatchLibraryCommand] = []
     var deletionError: WatchTransportStubError?
+    var enqueueFailureKinds: [WatchTransferFileKind] = []
     var outstanding: [OutstandingWatchFile] = []
     private(set) var activationCount = 0
 
@@ -1073,6 +1173,9 @@ private final class WatchTransportStub: WatchConnectivityTransport {
     func outstandingFiles() -> [OutstandingWatchFile] { outstanding }
 
     func enqueueFile(at url: URL, envelope: WatchTransferEnvelope) throws {
+        if enqueueFailureKinds.contains(envelope.fileKind) {
+            throw WatchTransportStubError.enqueueFailed
+        }
         sent.append((url, envelope))
         outstanding.append(OutstandingWatchFile(
             key: WatchTransferKey(transferID: envelope.transferID, fileKind: envelope.fileKind),
@@ -1100,8 +1203,14 @@ private final class WatchTransportStub: WatchConnectivityTransport {
 
 private enum WatchTransportStubError: LocalizedError {
     case sendFailed
+    case enqueueFailed
 
-    var errorDescription: String? { "Deletion send failed" }
+    var errorDescription: String? {
+        switch self {
+        case .sendFailed: "Deletion send failed"
+        case .enqueueFailed: "File enqueue failed"
+        }
+    }
 }
 
 @MainActor
