@@ -30,7 +30,7 @@
 - 15分キャッシュの期限境界、全件キャンセルの抽出中／再試行待ち／取込中、取込失敗後のキュー継続を確認
 - 保存済み音声の削除後にダウンロード完了表示を破棄し、キュー末尾操作でも再生履歴を0秒で上書きしないことを確認
 - 起動時に中断された隠しステージングM4Aも孤児ファイルとして清掃することを確認
-- watchOS 27 / Apple Watch Series 9（45mm）Simulator: Watchアプリのビルド、iPhoneアプリへの埋め込み、起動に成功
+- watchOS 27 / Apple Watch Series 9（41mm／45mm）Simulator: Watchアプリのビルドと回帰テストに成功
 - Watch側回帰テスト: 73件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認
 - WCSession callback URLを同期退避し、payload＋sidecar完成後のatomic rename、rename直前終了からの復旧、破損receiptの隔離を確認
@@ -54,8 +54,10 @@
 - Watch削除要求をSwiftDataへ先に永続化してから送信し、再activation時の再送、重複要求、遅延import ACKによる削除状態の復活防止を確認
 - inventory不一致後は、iPhoneの元音声から新しいsnapshot／revisionを作る再転送で復旧し、元音声がない場合は再転送を案内しない
 - iPhoneライブラリの44pt Watch転送操作、進捗／キャンセル／再試行／削除、独立したWatch管理タブ、Google未ログイン時のライブラリ＋Watch導線を実装
+- iPhone／Watch各バンドルへRequired Reason APIのPrivacy Manifestを同梱し、Disk Space、UserDefaults、File Timestampの宣言を自動検証
+- CIでiOS static analyzerとApple Watch Series 9（41mm／45mm）の両サイズを検証
 
-`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`は利用可能なApple Watch Series 9以降のSimulator（Series 9を優先）で回帰テストを実行する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はwatchOS 27のApple Watch Series 9（41mm／45mm）Simulatorを必要に応じて作成し、両サイズで回帰テストを実行する。各スクリプトはビルド成果物内のPrivacy Manifestも検証する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 
 ## Apple Watch実機の合格条件（Simulatorでは検証不可）
 
