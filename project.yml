@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.rimtty
   deploymentTarget:
     iOS: "27.0"
+    watchOS: "27.0"
   xcodeVersion: "27.0"
   generateEmptyDirectories: true
 configs:
@@ -16,15 +17,39 @@ packages:
     url: https://github.com/pvieito/PythonKit.git
     revision: 1ac25ddddca845ba0184911de9c00e1508948cf8
 targets:
+  YouTubePodWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Shared
+      - path: YouTubePodWatch
+    configFiles:
+      Debug: Config/Watch.xcconfig
+      Release: Config/Watch.xcconfig
+    settings:
+      base:
+        PRODUCT_NAME: YouTubePodWatch
+        PRODUCT_BUNDLE_IDENTIFIER: com.rimtty.YouTubePod.watchkitapp
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: YouTubePodWatch/Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: YES
+        SUPPORTS_MACCATALYST: NO
   YouTubePod:
     type: application
     platform: iOS
     sources:
       - path: YouTubePod
+      - path: Shared
     configFiles:
       Debug: Config/Base.xcconfig
       Release: Config/Base.xcconfig
     dependencies:
+      - target: YouTubePodWatch
+        embed: true
       - package: GoogleSignIn
         product: GoogleSignIn
       - package: PythonKit
@@ -82,6 +107,20 @@ targets:
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: YES
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+  YouTubePodWatchTests:
+    type: bundle.unit-test
+    platform: watchOS
+    sources:
+      - path: YouTubePodWatchTests
+    configFiles:
+      Debug: Config/WatchTests.xcconfig
+      Release: Config/WatchTests.xcconfig
+    dependencies:
+      - target: YouTubePodWatch
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   YouTubePod:
     build:
@@ -104,3 +143,11 @@ schemes:
         YOUTUBEPOD_TEST_SHORTS_URL: "$(YOUTUBEPOD_TEST_SHORTS_URL)"
         YOUTUBEPOD_TEST_LONG_URL: "$(YOUTUBEPOD_TEST_LONG_URL)"
         YOUTUBEPOD_TEST_CANCEL_URL: "$(YOUTUBEPOD_TEST_CANCEL_URL)"
+  YouTubePodWatch:
+    build:
+      targets:
+        YouTubePodWatch: all
+        YouTubePodWatchTests: [test]
+    test:
+      targets:
+        - YouTubePodWatchTests

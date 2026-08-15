@@ -26,8 +26,25 @@
 - 手動更新は対象フィードだけを更新し、別フィードの15分キャッシュを破棄しないことを確認
 - Pull to Refreshは成功後60秒間のクールダウン中に再通信せず、完了後の連打でクォータを消費しないことを確認
 - 異なる登録チャンネルページを同時取得しても`playlistItems.list`のアプリ全体並列数が4以下であることを確認
+- watchOS 27 / Apple Watch Series 9（45mm）Simulator: Watchアプリのビルド、iPhoneアプリへの埋め込み、起動に成功
+- Watch転送envelopeのencode/decode、schema不一致、破損payload、不正値、再生位置clamp: 6件、失敗0件
 
-`./scripts/verify.sh` は通常回帰テスト（実動画4件はスキップ）、`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はApple Watch Series 9 Simulatorの回帰テストを実行する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+
+## Apple Watch実機の合格条件（Simulatorでは検証不可）
+
+以下はペアリング済みApple Watch Series 9以降とiPhoneの実機で確認する。今回のSimulator実装中は未完了タスクとして維持する。
+
+- [ ] 短いM4Aをバックグラウンド転送し、Watchで取込ACK後に「保存済み」になる
+- [ ] 通常動画、Shorts、30分以上のM4Aを各1本転送できる
+- [ ] iPhone／Watchアプリが前面にない状態でも配送が完了または再開する
+- [ ] 転送中キャンセル後に一時ファイルが残らず、再試行できる
+- [ ] Watch再起動後も一覧、サムネイル、再生位置が復元する
+- [ ] iPhoneが機内モードでもWatchのローカル音声を再生できる
+- [ ] Bluetoothヘッドホンで画面消灯後も再生と操作が継続する
+- [ ] Watchの容量不足時に既存ライブラリが壊れない
+- [ ] Watchから削除後に音声、画像、SwiftDataがすべて消える
+- [ ] iPhoneの元音声を削除してもWatch側コピーを再生できる
 
 ## iOS 27実機の合格条件
 

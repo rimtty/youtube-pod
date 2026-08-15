@@ -45,6 +45,14 @@ Pull to Refreshの成功後60秒間は同じページを再通信せず、直前
 ./scripts/verify.sh
 ```
 
+Apple Watch Series 9（45mm）/ watchOS 27 Simulatorの回帰テスト:
+
+```sh
+./scripts/verify_watch.sh
+```
+
+WatchConnectivityの実ファイル配送とバックグラウンド再生の最終確認には、ペアリング済みiPhone／Apple Watch実機が必要です。未完了の実機項目は[TESTING.md](TESTING.md)に残しています。
+
 オンデバイス抽出のネットワーク統合テスト（通常動画1本）:
 
 ```sh

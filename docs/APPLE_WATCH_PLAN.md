@@ -29,6 +29,7 @@ iPhoneに保存済みのM4Aを`WatchConnectivity`で転送し、Watchアプリ�
 - 複数Watch間での同時ライブラリ管理
 - iPhoneとWatchの再生位置の自動統合
 - Watchのコンプリケーション、Widget、CarPlay連携
+- YouTubeアカウントの視聴履歴タブ
 
 ## 全体構成
 
