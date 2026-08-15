@@ -25,6 +25,7 @@
 		3B240296E21020FC8807F61C /* VideoRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A574E735EDFA6630EEDAE4AF /* VideoRowView.swift */; };
 		3F8B56EFF8C2FD09703EE794 /* WatchConnectivityTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 812A408ED31A4B5EC3381241 /* WatchConnectivityTransport.swift */; };
 		42AE5AE52EF11D01435CE581 /* WatchAudioValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2575879BBB9A819198F22C39 /* WatchAudioValidator.swift */; };
+		45AA57D045F57EE8CCCBC40F /* WatchWCSessionDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB5B605B26858B41FC919F67 /* WatchWCSessionDriver.swift */; };
 		49663BDEFEBD7319E409C0F2 /* YouTubeURLParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044E5B32006034714D27B5C4 /* YouTubeURLParserTests.swift */; };
 		4ACEDE59D6638723C0FE1515 /* WatchAudioPlayerServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C704D2FB611E02F8A46080E0 /* WatchAudioPlayerServiceTests.swift */; };
 		4C2B0DDDF55E35137B3EE46D /* PhoneWatchTransferService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D7C4B92010911A4AF7900CB /* PhoneWatchTransferService.swift */; };
@@ -207,6 +208,7 @@
 		ECBF84DBA1C1C2CBC63844AA /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F21B79C2A27FB9BB14562982 /* WatchNowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchNowPlayingView.swift; sourceTree = "<group>"; };
 		FB54C7DF35A0712AE5967AD2 /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
+		FB5B605B26858B41FC919F67 /* WatchWCSessionDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWCSessionDriver.swift; sourceTree = "<group>"; };
 		FD1CCA0C071673B7CBABD275 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = Frameworks/Python.xcframework; sourceTree = "<group>"; };
 		FDDC9D496E0AF6B6A209FBEC /* YouTubePodTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = YouTubePodTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -235,6 +237,7 @@
 				8402F71553DB87ACCB2F8D13 /* WatchIncomingFileStager.swift */,
 				DB2C2EF35D1511E2E502C271 /* WatchPeerSyncService.swift */,
 				BB902880F3D658771A74D9C7 /* WatchSessionReceiver.swift */,
+				FB5B605B26858B41FC919F67 /* WatchWCSessionDriver.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -701,6 +704,7 @@
 				4EC921A8D181478022C12A9E /* WatchSavedAudio.swift in Sources */,
 				986DAE8E2AFB7AA426645274 /* WatchSessionReceiver.swift in Sources */,
 				779762809D5765754F692BAD /* WatchTransferEnvelope.swift in Sources */,
+				45AA57D045F57EE8CCCBC40F /* WatchWCSessionDriver.swift in Sources */,
 				9181DDE6816B67E58936F59A /* YouTubePodWatchApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
