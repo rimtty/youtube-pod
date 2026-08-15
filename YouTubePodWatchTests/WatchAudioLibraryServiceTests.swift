@@ -648,6 +648,182 @@ final class WatchAudioLibraryServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: staged.receiptDirectoryURL.path))
     }
 
+    func testExceptionAfterFinalAudioCopyRemovesOwnedFileAndPersistsOnlyFailureAcknowledgement() async throws {
+        let fixture = try makeFixture()
+        let transferID = UUID()
+        let staged = try makeStaged(
+            videoID: "copythrow01",
+            transferID: transferID,
+            revision: 1,
+            kind: .audio
+        )
+        let service = WatchAudioLibraryService(
+            modelContext: fixture.context,
+            validator: PassthroughAudioValidator(),
+            capacityChecker: AllowingCapacityChecker(),
+            rootURL: fixture.rootURL,
+            minimumCapacityReserve: 0,
+            audioImportCheckpoint: { checkpoint in
+                if checkpoint == .afterFinalAudioCopy {
+                    throw ImportCheckpointFailure.forced
+                }
+            }
+        )
+
+        let result = await service.importStagedFile(staged)
+
+        XCTAssertEqual(result, .rejected(.persistenceFailure))
+        XCTAssertTrue(fetch(WatchSavedAudio.self, fixture.context).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("Audio/\(transferID.uuidString).m4a").path))
+        let acknowledgements = fetch(WatchPendingAcknowledgement.self, fixture.context)
+            .filter { $0.transferID == transferID }
+        XCTAssertEqual(acknowledgements.count, 1)
+        XCTAssertEqual(acknowledgements.first?.outcome, .failed)
+        XCTAssertEqual(acknowledgements.first?.errorCode, .persistenceFailure)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staged.fileURL.path))
+    }
+
+    func testExceptionBeforeCommitRestoresPreviousRevisionAndRollsBackImportedAcknowledgement() async throws {
+        let fixture = try makeFixture()
+        let original = try makeStaged(
+            videoID: "committhrow1",
+            transferID: UUID(),
+            revision: 1,
+            kind: .audio
+        )
+        let originalResult = await fixture.service.importStagedFile(original)
+        XCTAssertEqual(originalResult, .imported)
+        let originalArtwork = try makeStaged(
+            videoID: "committhrow1",
+            transferID: original.envelope.transferID,
+            revision: 1,
+            kind: .artwork
+        )
+        let originalArtworkResult = await fixture.service.importStagedFile(originalArtwork)
+        XCTAssertEqual(originalArtworkResult, .artworkAttached)
+        let originalSaved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        let originalAudioPath = originalSaved.audioRelativePath
+        let originalArtworkPath = try XCTUnwrap(originalSaved.thumbnailRelativePath)
+        let originalGeneration = try XCTUnwrap(
+            fetch(WatchLibraryMetadata.self, fixture.context).first
+        ).generation
+
+        let replacementID = UUID()
+        let pendingArtwork = try makeStaged(
+            videoID: "committhrow1",
+            transferID: replacementID,
+            revision: 2,
+            kind: .artwork
+        )
+        let pendingArtworkResult = await fixture.service.importStagedFile(pendingArtwork)
+        XCTAssertEqual(pendingArtworkResult, .artworkPending)
+        let replacement = try makeStaged(
+            videoID: "committhrow1",
+            transferID: replacementID,
+            revision: 2,
+            kind: .audio
+        )
+        let service = WatchAudioLibraryService(
+            modelContext: fixture.context,
+            validator: PassthroughAudioValidator(),
+            capacityChecker: AllowingCapacityChecker(),
+            rootURL: fixture.rootURL,
+            minimumCapacityReserve: 0,
+            audioImportCheckpoint: { checkpoint in
+                if checkpoint == .beforeCommit {
+                    throw ImportCheckpointFailure.forced
+                }
+            }
+        )
+
+        let result = await service.importStagedFile(replacement)
+
+        XCTAssertEqual(result, .rejected(.persistenceFailure))
+        let retained = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        XCTAssertEqual(retained.transferID, original.envelope.transferID)
+        XCTAssertEqual(retained.revision, 1)
+        XCTAssertEqual(retained.audioRelativePath, originalAudioPath)
+        XCTAssertEqual(retained.thumbnailRelativePath, originalArtworkPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent(originalAudioPath).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent(originalArtworkPath).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("Audio/\(replacementID.uuidString).m4a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("Artwork/\(replacementID.uuidString).jpg").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("PendingArtwork/\(replacementID.uuidString).jpg").path))
+        XCTAssertEqual(
+            fetch(WatchLibraryMetadata.self, fixture.context).first?.generation,
+            originalGeneration
+        )
+        let replacementAcknowledgements = fetch(WatchPendingAcknowledgement.self, fixture.context)
+            .filter { $0.transferID == replacementID }
+        XCTAssertEqual(replacementAcknowledgements.count, 1)
+        XCTAssertEqual(replacementAcknowledgements.first?.outcome, .failed)
+        XCTAssertEqual(replacementAcknowledgements.first?.errorCode, .persistenceFailure)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: replacement.fileURL.path))
+    }
+
+    func testFailureAcknowledgementSaveFailureKeepsReceiptAndPendingArtworkForRetry() async throws {
+        let fixture = try makeFixture()
+        let transferID = UUID()
+        let pendingArtwork = try makeStaged(
+            videoID: "ackfail0001",
+            transferID: transferID,
+            revision: 1,
+            kind: .artwork
+        )
+        let pendingArtworkResult = await fixture.service.importStagedFile(pendingArtwork)
+        XCTAssertEqual(pendingArtworkResult, .artworkPending)
+        let staged = try makeStaged(
+            videoID: "ackfail0001",
+            transferID: transferID,
+            revision: 1,
+            kind: .audio
+        )
+        let saveController = SaveFailureController(failures: 1)
+        let service = WatchAudioLibraryService(
+            modelContext: fixture.context,
+            validator: PassthroughAudioValidator(),
+            capacityChecker: AllowingCapacityChecker(),
+            rootURL: fixture.rootURL,
+            minimumCapacityReserve: 0,
+            saveChanges: { try saveController.save($0) },
+            audioImportCheckpoint: { checkpoint in
+                if checkpoint == .beforeCommit {
+                    throw ImportCheckpointFailure.forced
+                }
+            }
+        )
+
+        let result = await service.importStagedFile(staged)
+
+        XCTAssertEqual(result, .persistenceFailed)
+        XCTAssertTrue(fetch(WatchSavedAudio.self, fixture.context).isEmpty)
+        XCTAssertTrue(fetch(WatchPendingAcknowledgement.self, fixture.context)
+            .filter { $0.transferID == transferID }.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("Audio/\(transferID.uuidString).m4a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("Artwork/\(transferID.uuidString).jpg").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("PendingArtwork/\(transferID.uuidString).jpg").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("PendingArtwork/\(transferID.uuidString).json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staged.fileURL.path))
+
+        let retryResult = await fixture.service.importStagedFile(staged)
+        XCTAssertEqual(retryResult, .imported)
+        let saved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        XCTAssertEqual(saved.transferID, transferID)
+        XCTAssertNotNil(saved.thumbnailRelativePath)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.rootURL
+            .appendingPathComponent("PendingArtwork/\(transferID.uuidString).jpg").path))
+    }
+
     func testStartupCleanupRemovesOrphansAndExpiredPendingArtwork() async throws {
         let fixture = try makeFixture(pendingArtworkTTL: 10)
         let saved = try makeStaged(
@@ -780,6 +956,10 @@ private final class SaveFailureController {
 }
 
 private enum SaveFailure: Error {
+    case forced
+}
+
+private enum ImportCheckpointFailure: Error {
     case forced
 }
 

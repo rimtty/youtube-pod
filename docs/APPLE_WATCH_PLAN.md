@@ -37,7 +37,7 @@ iPhoneに保存済みのM4Aを`WatchConnectivity`で転送し、Watchアプリ�
 - iPhoneライブラリにWatch転送／キャンセル／再試行／削除操作を追加し、ライブラリ右側にWatch管理タブを実装済み
 - Watch inventoryはiPhoneで永続cursorと照合し、古いinstance／generation、identity不一致、サイズ不一致、遅延ACKによる状態復活を拒否する
 - Google未ログイン時も、iPhoneの保存済みライブラリとWatch管理タブだけを利用できる
-- Simulatorの自動回帰はiOS 127件（ネットワーク4件スキップ）とWatch 80件が成功
+- Simulatorの自動回帰はiOS 127件（ネットワーク4件スキップ）とWatch 83件が成功
 - WatchConnectivityの実配送、長尺転送、Bluetooth音声、画面消灯後の再生はペアリング済み実機で未検証
 
 ## 全体構成
