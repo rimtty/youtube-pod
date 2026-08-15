@@ -8,6 +8,7 @@ enum AuthenticationPhase: Equatable {
     case signedOut
     case signingIn
     case signedIn
+    case authorizationRequired
     case failed(String)
 }
 
@@ -26,8 +27,14 @@ final class GoogleAuthService: @unchecked Sendable {
     var isSignedIn: Bool { phase == .signedIn }
     var isWorking: Bool { phase == .restoring || phase == .signingIn }
     var failureMessage: String? {
-        guard case .failed(let message) = phase else { return nil }
-        return message
+        switch phase {
+        case .authorizationRequired:
+            "登録チャンネルを読み取る権限が必要です。Googleでもう一度許可してください。"
+        case .failed(let message):
+            message
+        default:
+            nil
+        }
     }
     var isConfigured: Bool {
         let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String ?? ""
@@ -42,7 +49,12 @@ final class GoogleAuthService: @unchecked Sendable {
         }
         do {
             let user = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
-            apply(user)
+            guard Self.includesYouTubeReadOnlyScope(user.grantedScopes) else {
+                applyProfile(user)
+                phase = .authorizationRequired
+                return
+            }
+            applySignedInUser(user)
         } catch {
             clearUser(phase: .signedOut)
         }
@@ -57,13 +69,33 @@ final class GoogleAuthService: @unchecked Sendable {
         }
         phase = .signingIn
         do {
-            let result = try await GIDSignIn.sharedInstance.signIn(
-                withPresenting: presenter,
-                hint: nil,
-                additionalScopes: [readOnlyScope]
-            )
-            apply(result.user)
+            let user: GIDGoogleUser
+            if let currentUser = GIDSignIn.sharedInstance.currentUser,
+               !Self.includesYouTubeReadOnlyScope(currentUser.grantedScopes) {
+                let result = try await currentUser.addScopes(
+                    [readOnlyScope],
+                    presenting: presenter
+                )
+                user = result.user
+            } else {
+                let result = try await GIDSignIn.sharedInstance.signIn(
+                    withPresenting: presenter,
+                    hint: nil,
+                    additionalScopes: [readOnlyScope]
+                )
+                user = result.user
+            }
+            guard Self.includesYouTubeReadOnlyScope(user.grantedScopes) else {
+                applyProfile(user)
+                phase = .authorizationRequired
+                throw AuthError.requiredScopeNotGranted
+            }
+            applySignedInUser(user)
         } catch {
+            if case AuthError.requiredScopeNotGranted = error {
+                phase = .authorizationRequired
+                throw error
+            }
             let nsError = error as NSError
             if nsError.domain == kGIDSignInErrorDomain && nsError.code == -5 {
                 phase = .signedOut
@@ -80,9 +112,20 @@ final class GoogleAuthService: @unchecked Sendable {
     }
 
     func validCredential() async -> YouTubeCredential? {
-        guard isSignedIn, let user = GIDSignIn.sharedInstance.currentUser else { return nil }
+        guard isSignedIn,
+              let user = GIDSignIn.sharedInstance.currentUser else { return nil }
+        guard Self.includesYouTubeReadOnlyScope(user.grantedScopes) else {
+            applyProfile(user)
+            phase = .authorizationRequired
+            return nil
+        }
         do {
             let refreshed = try await user.refreshTokensIfNeeded()
+            guard Self.includesYouTubeReadOnlyScope(refreshed.grantedScopes) else {
+                applyProfile(refreshed)
+                phase = .authorizationRequired
+                return nil
+            }
             return credential(for: refreshed)
         } catch {
             guard let expirationDate = user.accessToken.expirationDate,
@@ -99,13 +142,21 @@ final class GoogleAuthService: @unchecked Sendable {
         clearUser(phase: .failed("Googleの認証期限が切れました。もう一度ログインしてください。"))
     }
 
-    private func apply(_ user: GIDGoogleUser) {
+    static func includesYouTubeReadOnlyScope(_ scopes: [String]?) -> Bool {
+        scopes?.contains("https://www.googleapis.com/auth/youtube.readonly") == true
+    }
+
+    private func applySignedInUser(_ user: GIDGoogleUser) {
+        applyProfile(user)
+        phase = .signedIn
+    }
+
+    private func applyProfile(_ user: GIDGoogleUser) {
         displayName = user.profile?.name ?? "YouTubeユーザー"
         email = user.profile?.email ?? ""
         profileImageURL = user.profile?.imageURL(withDimension: 160)
         accountID = user.userID ?? email
         sessionID = UUID()
-        phase = .signedIn
     }
 
     private func clearUser(phase: AuthenticationPhase) {
@@ -135,12 +186,13 @@ final class GoogleAuthService: @unchecked Sendable {
 }
 
 private enum AuthError: LocalizedError {
-    case noUser, notConfigured, noPresenter
+    case noUser, notConfigured, noPresenter, requiredScopeNotGranted
     var errorDescription: String? {
         switch self {
         case .noUser: "Googleアカウントを取得できませんでした。"
         case .notConfigured: "Config/Secrets.xcconfig にGoogle Client IDを設定してください。"
         case .noPresenter: "ログイン画面を表示できませんでした。"
+        case .requiredScopeNotGranted: "YouTubeの読み取り権限が許可されませんでした。"
         }
     }
 }

@@ -31,7 +31,7 @@ struct MiniPlayerView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("再生中、\(item.title)、\(item.channelTitle)")
+                .accessibilityLabel("\(isPlaying ? "再生中" : "一時停止中")、\(item.title)、\(item.channelTitle)")
                 .accessibilityHint("ダブルタップしてプレイヤーを開く")
 
                 Button(action: togglePlayback) {
@@ -46,6 +46,7 @@ struct MiniPlayerView: View {
 
             MiniPlaybackScrubber(
                 value: scrubProgress ?? normalizedProgress,
+                duration: item.duration,
                 onChange: { scrubProgress = $0 },
                 onCommit: { value in
                     seek(item.duration * value)
@@ -90,6 +91,7 @@ struct MiniPlayerView: View {
 
 private struct MiniPlaybackScrubber: View {
     let value: Double
+    let duration: TimeInterval
     let onChange: (Double) -> Void
     let onCommit: (Double) -> Void
 
@@ -125,7 +127,9 @@ private struct MiniPlaybackScrubber: View {
         .frame(height: 18)
         .accessibilityElement()
         .accessibilityLabel("ミニプレイヤーの再生位置")
-        .accessibilityValue("\(Int((normalizedValue * 100).rounded()))パーセント")
+        .accessibilityValue(
+            "\(DisplayFormatter.duration(duration * normalizedValue))、全体 \(DisplayFormatter.duration(duration))"
+        )
         .accessibilityAdjustableAction { direction in
             let adjustment = direction == .increment ? 0.05 : -0.05
             onCommit(min(max(normalizedValue + adjustment, 0), 1))
@@ -154,6 +158,7 @@ struct FullPlayerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrubTime: TimeInterval?
 
     var body: some View {
@@ -217,7 +222,7 @@ struct FullPlayerView: View {
             Text(item.title)
                 .font(.title3.bold())
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 .frame(maxWidth: .infinity, alignment: .center)
             Text(item.channelTitle)
                 .font(.subheadline.weight(.medium))
@@ -271,22 +276,45 @@ struct FullPlayerView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 14) {
-            playerButton("backward.end.fill", label: "前の項目", action: previous)
-            playerButton("gobackward.15", label: "15秒戻す") { skip(-15) }
-            Button(action: togglePlayback) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 27, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 64, height: 64)
-                    .background(PodPalette.brandGradient, in: Circle())
-                    .shadow(color: PodPalette.raspberry.opacity(0.26), radius: 12, y: 6)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 12) {
+                    primaryPlaybackButton
+                    HStack(spacing: 18) {
+                        secondaryPlaybackButtons
+                    }
+                }
+            } else {
+                HStack(spacing: 14) {
+                    playerButton("backward.end.fill", label: "前の項目", action: previous)
+                    playerButton("gobackward.15", label: "15秒戻す") { skip(-15) }
+                    primaryPlaybackButton
+                    playerButton("goforward.15", label: "15秒進める") { skip(15) }
+                    playerButton("forward.end.fill", label: "次の項目", action: next)
+                }
             }
-            .accessibilityLabel(isPlaying ? "一時停止" : "再生")
-            playerButton("goforward.15", label: "15秒進める") { skip(15) }
-            playerButton("forward.end.fill", label: "次の項目", action: next)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var secondaryPlaybackButtons: some View {
+        playerButton("backward.end.fill", label: "前の項目", action: previous)
+        playerButton("gobackward.15", label: "15秒戻す") { skip(-15) }
+        playerButton("goforward.15", label: "15秒進める") { skip(15) }
+        playerButton("forward.end.fill", label: "次の項目", action: next)
+    }
+
+    private var primaryPlaybackButton: some View {
+        Button(action: togglePlayback) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 27, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 64, height: 64)
+                .background(PodPalette.brandGradient, in: Circle())
+                .shadow(color: PodPalette.raspberry.opacity(0.26), radius: 12, y: 6)
+        }
+        .accessibilityLabel(isPlaying ? "一時停止" : "再生")
     }
 
     private func playerButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {

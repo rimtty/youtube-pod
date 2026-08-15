@@ -1,11 +1,10 @@
 import Foundation
 
 protocol YouTubeCatalogServing: Sendable {
-    func popularVideos(regionCode: String) async throws -> [VideoSummary]
+    func popularVideos(regionCode: String, forceRefresh: Bool) async throws -> [VideoSummary]
     func searchVideos(query: String) async throws -> [VideoSummary]
-    func subscriptionUploads() async throws -> [VideoSummary]
-    func subscriptionUploadsPage(pageToken: String?) async throws -> SubscriptionFeedPage
-    func channelVideosPage(channelID: String, pageToken: String?) async throws -> ChannelVideoPage
+    func subscriptionUploadsPage(pageToken: String?, forceRefresh: Bool) async throws -> SubscriptionFeedPage
+    func channelVideosPage(channelID: String, pageToken: String?, forceRefresh: Bool) async throws -> ChannelVideoPage
     func refreshStatistics(videoIDs: [String]) async throws -> [String: Int64]
 }
 

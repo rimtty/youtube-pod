@@ -18,6 +18,8 @@ struct HomeView: View {
     @State private var errorMessage: String?
     @State private var searchErrorMessage: String?
     @State private var selectedChannel: ChannelDestination?
+    @State private var searchTask: Task<Void, Never>?
+    @State private var searchRequestID = 0
 
     var body: some View {
         NavigationStack {
@@ -45,7 +47,7 @@ struct HomeView: View {
             }
             .navigationTitle("ホーム")
             .searchable(text: $searchText, prompt: "動画を検索")
-            .onSubmit(of: .search) { Task { await search() } }
+            .onSubmit(of: .search) { submitSearch() }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     PodToolbarBrandMark(size: 34)
@@ -63,7 +65,11 @@ struct HomeView: View {
                 }
             }
             .refreshable { await reload(forceRefresh: true) }
-            .task { await reload(forceRefresh: false) }
+            .task(id: environment.auth.sessionID) {
+                guard popular.isEmpty && recent.isEmpty else { return }
+                await reload(forceRefresh: false)
+            }
+            .onDisappear { searchTask?.cancel() }
         }
     }
 
@@ -81,6 +87,16 @@ struct HomeView: View {
             LazyVStack(alignment: .leading, spacing: 22) {
                 hero
 
+                if let errorMessage {
+                    SearchFeedbackCard(
+                        icon: "arrow.clockwise.circle",
+                        title: "ホームを更新できませんでした",
+                        message: errorMessage,
+                        actionTitle: "もう一度試す",
+                        action: { Task { await reload(forceRefresh: true) } }
+                    )
+                }
+
                 if isSearching {
                     HStack { Spacer(); ProgressView("検索中…"); Spacer() }
                 } else if let searchErrorMessage {
@@ -89,7 +105,7 @@ struct HomeView: View {
                         title: "検索できませんでした",
                         message: searchErrorMessage,
                         actionTitle: "もう一度試す",
-                        action: { Task { await search() } }
+                        action: submitSearch
                     )
                 } else if !searchResults.isEmpty {
                     videoSection(
@@ -182,29 +198,34 @@ struct HomeView: View {
     @MainActor
     private func reload(forceRefresh: Bool = false) async {
         guard !isLoading else { return }
+        if !forceRefresh, (!popular.isEmpty || !recent.isEmpty) { return }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
-        if forceRefresh {
-            await environment.catalog.clearCache()
-        }
-
         // Start both requests together. The subscription feed can require several
         // YouTube API calls, so running it after the popular feed made the refresh
         // indicator appear to remain stuck for much longer than necessary.
-        async let popularRequest = environment.catalog.popularVideos(regionCode: "JP")
-        async let recentRequest = environment.catalog.subscriptionUploads()
+        async let popularRequest = environment.catalog.popularVideos(
+            regionCode: "JP",
+            forceRefresh: forceRefresh
+        )
+        async let recentRequest = environment.catalog.subscriptionUploadsPage(
+            pageToken: nil,
+            forceRefresh: forceRefresh
+        )
 
         do {
             popular = try await popularRequest
         } catch {
+            if error is CancellationError { return }
             errorMessage = error.localizedDescription
         }
 
         do {
-            recent = try await recentRequest
+            recent = try await recentRequest.videos
         } catch {
+            if error is CancellationError { return }
             if popular.isEmpty {
                 errorMessage = error.localizedDescription
             }
@@ -212,21 +233,41 @@ struct HomeView: View {
     }
 
     @MainActor
-    private func search() async {
+    private func submitSearch() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
+            searchTask?.cancel()
+            searchRequestID += 1
+            searchTask = nil
+            isSearching = false
             searchResults = []
             submittedSearchText = ""
             searchErrorMessage = nil
             return
         }
+        searchTask?.cancel()
+        searchRequestID += 1
+        let requestID = searchRequestID
+        searchTask = Task { await search(query: query, requestID: requestID) }
+    }
+
+    @MainActor
+    private func search(query: String, requestID: Int) async {
         submittedSearchText = query
         searchErrorMessage = nil
         isSearching = true
-        defer { isSearching = false }
+        defer {
+            if requestID == searchRequestID {
+                isSearching = false
+                searchTask = nil
+            }
+        }
         do {
-            searchResults = try await environment.catalog.searchVideos(query: query)
+            let results = try await environment.catalog.searchVideos(query: query)
+            guard !Task.isCancelled, requestID == searchRequestID else { return }
+            searchResults = results
         } catch {
+            guard !(error is CancellationError), requestID == searchRequestID else { return }
             searchResults = []
             searchErrorMessage = error.localizedDescription
         }

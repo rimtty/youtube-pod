@@ -21,6 +21,7 @@ struct ChannelVideosView: View {
     @State private var isLoadingMore = false
     @State private var errorMessage: String?
     @State private var loadMoreError: String?
+    @State private var visitedPageTokens = Set<String>()
 
     var body: some View {
         ZStack {
@@ -122,31 +123,31 @@ struct ChannelVideosView: View {
 
     @MainActor
     private func load(forceRefresh: Bool) async {
-        guard !isLoading else { return }
+        guard !isLoading, !isLoadingMore else { return }
+        if !forceRefresh, !videos.isEmpty { return }
         isLoading = true
         errorMessage = nil
         loadMoreError = nil
         defer { isLoading = false }
 
-        if forceRefresh {
-            await environment.catalog.clearCache()
-        }
-
         do {
             let page = try await environment.catalog.channelVideosPage(
                 channelID: destination.channelID,
-                pageToken: nil
+                pageToken: nil,
+                forceRefresh: forceRefresh
             )
             videos = page.videos
-            nextPageToken = page.nextPageToken
+            visitedPageTokens.removeAll()
+            nextPageToken = validatedNextToken(page.nextPageToken, after: nil)
         } catch {
+            if error is CancellationError { return }
             errorMessage = error.localizedDescription
         }
     }
 
     @MainActor
     private func loadMore() async {
-        guard let nextPageToken, !isLoadingMore else { return }
+        guard let nextPageToken, !isLoading, !isLoadingMore else { return }
         isLoadingMore = true
         loadMoreError = nil
         defer { isLoadingMore = false }
@@ -154,12 +155,20 @@ struct ChannelVideosView: View {
         do {
             let page = try await environment.catalog.channelVideosPage(
                 channelID: destination.channelID,
-                pageToken: nextPageToken
+                pageToken: nextPageToken,
+                forceRefresh: false
             )
             videos = YouTubeDataClient.mergeUnique([videos, page.videos])
-            self.nextPageToken = page.nextPageToken
+            self.nextPageToken = validatedNextToken(page.nextPageToken, after: nextPageToken)
         } catch {
+            if error is CancellationError { return }
             loadMoreError = error.localizedDescription
         }
+    }
+
+    private func validatedNextToken(_ candidate: String?, after current: String?) -> String? {
+        guard let candidate, !candidate.isEmpty, candidate != current,
+              visitedPageTokens.insert(candidate).inserted else { return nil }
+        return candidate
     }
 }
