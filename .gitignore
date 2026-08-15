@@ -1,0 +1,8 @@
+.DS_Store
+DerivedData/
+.build/
+Frameworks/
+PythonRuntime/site-packages/
+Config/Secrets.xcconfig
+*.xcuserstate
+xcuserdata/

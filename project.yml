@@ -1,0 +1,106 @@
+name: YouTubePod
+options:
+  bundleIdPrefix: com.rimtty
+  deploymentTarget:
+    iOS: "27.0"
+  xcodeVersion: "27.0"
+  generateEmptyDirectories: true
+configs:
+  Debug: debug
+  Release: release
+packages:
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS.git
+    exactVersion: 9.2.0
+  PythonKit:
+    url: https://github.com/pvieito/PythonKit.git
+    revision: 1ac25ddddca845ba0184911de9c00e1508948cf8
+targets:
+  YouTubePod:
+    type: application
+    platform: iOS
+    sources:
+      - path: YouTubePod
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: PythonKit
+        product: PythonKit
+      - framework: Frameworks/Python.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: YouTubePod
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: YouTubePod/Info.plist
+        CODE_SIGN_ENTITLEMENTS: YouTubePod/YouTubePod.entitlements
+        SUPPORTS_MACCATALYST: NO
+        # BeeWare's bundled CPython extension modules are packaged per
+        # simulator architecture. iOS 27 development is Apple-silicon-only,
+        # so keep generic/CI simulator builds on the supported arm64 slice.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        OTHER_LDFLAGS: "$(inherited) -all_load"
+    postBuildScripts:
+      - name: Install bundled Python runtime
+        script: |
+          set -e
+          if [ ! -d "$PROJECT_DIR/Frameworks/Python.xcframework" ]; then
+            echo "error: Run ./scripts/bootstrap.sh before building."
+            exit 1
+          fi
+          mkdir -p "$CODESIGNING_FOLDER_PATH/PythonRuntime"
+          cp "$PROJECT_DIR/PythonRuntime/download_audio.py" "$CODESIGNING_FOLDER_PATH/PythonRuntime/download_audio.py"
+          mkdir -p "$CODESIGNING_FOLDER_PATH/python-packages"
+          rsync -au --delete "$PROJECT_DIR/PythonRuntime/site-packages/" "$CODESIGNING_FOLDER_PATH/python-packages/"
+          if [ -z "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
+            export EXPANDED_CODE_SIGN_IDENTITY="-"
+            export EXPANDED_CODE_SIGN_IDENTITY_NAME="Ad Hoc"
+          fi
+          source "$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh"
+          install_python Frameworks/Python.xcframework python-packages
+        basedOnDependencyAnalysis: false
+  YouTubePodTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: YouTubePodTests
+    configFiles:
+      Debug: Config/Tests.xcconfig
+      Release: Config/Tests.xcconfig
+    dependencies:
+      - target: YouTubePod
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+schemes:
+  YouTubePod:
+    build:
+      targets:
+        YouTubePod: all
+        YouTubePodTests: [test]
+    test:
+      targets:
+        - YouTubePodTests
+  YouTubePodIntegration:
+    build:
+      targets:
+        YouTubePod: all
+        YouTubePodTests: [test]
+    test:
+      targets:
+        - YouTubePodTests
+      environmentVariables:
+        YOUTUBEPOD_RUN_NETWORK_INTEGRATION: "1"
+        YOUTUBEPOD_TEST_SHORTS_URL: "$(YOUTUBEPOD_TEST_SHORTS_URL)"
+        YOUTUBEPOD_TEST_LONG_URL: "$(YOUTUBEPOD_TEST_LONG_URL)"
+        YOUTUBEPOD_TEST_CANCEL_URL: "$(YOUTUBEPOD_TEST_CANCEL_URL)"

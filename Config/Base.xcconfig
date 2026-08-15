@@ -1,0 +1,5 @@
+PRODUCT_BUNDLE_IDENTIFIER = com.rimtty.YouTubePod
+DEVELOPMENT_TEAM =
+GOOGLE_CLIENT_ID = REPLACE_ME.apps.googleusercontent.com
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_ME
+#include? "Secrets.xcconfig"
