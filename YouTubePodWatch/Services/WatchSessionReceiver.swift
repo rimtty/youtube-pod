@@ -13,6 +13,7 @@ final class WatchSessionReceiver {
     private let library: WatchAudioLibraryService
     private let peer: any WatchPeerSyncing
     private let availableCapacity: @MainActor @Sendable () -> Int64?
+    private let invalidatePlaybackItem: @MainActor @Sendable (String) -> Void
 
     private var hasStarted = false
     private var isSynchronizing = false
@@ -25,12 +26,14 @@ final class WatchSessionReceiver {
         stager: WatchIncomingFileStager,
         library: WatchAudioLibraryService,
         peer: any WatchPeerSyncing,
-        availableCapacity: @escaping @MainActor @Sendable () -> Int64? = { nil }
+        availableCapacity: @escaping @MainActor @Sendable () -> Int64? = { nil },
+        invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in }
     ) {
         self.stager = stager
         self.library = library
         self.peer = peer
         self.availableCapacity = availableCapacity
+        self.invalidatePlaybackItem = invalidatePlaybackItem
     }
 
     func start() {
@@ -85,6 +88,7 @@ final class WatchSessionReceiver {
             _ = flushAcknowledgements()
 
             for stagedCommand in try stager.listStagedCommands() {
+                invalidatePlaybackItem(stagedCommand.command.youtubeID)
                 let result = library.delete(stagedCommand.command)
                 if result == .persistenceFailed {
                     lastErrorMessage = "削除操作を保存できませんでした。次回の同期で再試行します。"
@@ -95,6 +99,11 @@ final class WatchSessionReceiver {
 
             let stagedFiles = try stager.listStagedFiles()
             for stagedFile in stagedFiles {
+                if stagedFile.envelope.fileKind == .audio {
+                    // Import may replace and remove the existing file. Clear
+                    // any immutable URL captured by AVPlayer/queue first.
+                    invalidatePlaybackItem(stagedFile.envelope.youtubeID)
+                }
                 let result = await library.importStagedFile(stagedFile)
                 // A persistence failure intentionally leaves the receipt in
                 // place. Stop this pass to avoid a hot retry loop and resume on
@@ -114,6 +123,29 @@ final class WatchSessionReceiver {
         } catch {
             lastErrorMessage = error.localizedDescription
         }
+    }
+
+    /// Deletes an item initiated on Apple Watch and immediately publishes the
+    /// resulting acknowledgement and authoritative inventory to iPhone.
+    /// The caller must stop and clear playback before invoking this method.
+    @discardableResult
+    func deleteFromWatch(_ saved: WatchSavedAudio) async -> WatchLibraryImportResult {
+        invalidatePlaybackItem(saved.youtubeID)
+        let result = library.delete(WatchLibraryCommand(
+            // Watch-originated deletion must acknowledge the same transfer
+            // identity that iPhone currently tracks. A new command identity
+            // would be ignored by PhoneWatchTransferService as stale.
+            commandID: saved.transferID,
+            kind: .delete,
+            youtubeID: saved.youtubeID,
+            revision: saved.revision
+        ))
+        guard result != .persistenceFailed else {
+            lastErrorMessage = "削除操作を保存できませんでした。もう一度お試しください。"
+            return result
+        }
+        await synchronizeNow()
+        return result
     }
 
     private func requestSynchronization() {

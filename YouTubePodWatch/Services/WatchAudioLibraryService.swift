@@ -186,6 +186,28 @@ final class WatchAudioLibraryService {
         ).validated()
     }
 
+    func audioFileURL(for saved: WatchSavedAudio) -> URL? {
+        audioURL(for: saved)
+    }
+
+    func artworkFileURL(for saved: WatchSavedAudio) -> URL? {
+        artworkURL(for: saved)
+    }
+
+    func persistPlaybackPosition(
+        videoID: String,
+        position: TimeInterval,
+        hasBeenPlayed: Bool
+    ) throws {
+        guard let saved = try savedAudio(videoID: videoID) else { return }
+        let safePosition = position.isFinite
+            ? min(max(position, 0), max(saved.duration, 0))
+            : 0
+        saved.lastPlaybackPosition = safePosition
+        saved.hasBeenPlayed = saved.hasBeenPlayed || hasBeenPlayed
+        try saveChanges(modelContext)
+    }
+
     func pendingAcknowledgements() throws -> [WatchPendingAcknowledgement] {
         try fetchAcknowledgements().sorted {
             if $0.createdAt == $1.createdAt {
