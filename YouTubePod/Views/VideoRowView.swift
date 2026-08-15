@@ -145,6 +145,19 @@ struct VideoRowView: View {
                     .accessibilityLabel("「\(video.title)」の保存を中止")
             }
             .accessibilityElement(children: .contain)
+        case .retrying(let attempt, let maximumRetries):
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(PodPalette.raspberry)
+                Text("自動再試行 \(attempt)/\(maximumRetries)")
+                    .font(.caption.bold())
+                    .foregroundStyle(PodPalette.violet)
+                Button("中止", systemImage: "xmark.circle.fill", action: onCancel)
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("「\(video.title)」の保存を中止")
+            }
         case .validating:
             DownloadStatusLabel(icon: "checkmark.shield", text: "音声を確認中", tint: PodPalette.violet)
         case .completed:

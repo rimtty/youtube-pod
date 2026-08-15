@@ -3,8 +3,23 @@ import Darwin
 import Foundation
 
 actor PythonAudioExtractor: AudioExtracting {
+    private static let workDirectoryPrefix = "YouTubePod-"
     private var cancellationURL: URL?
     private let worker = DispatchQueue(label: "com.rimtty.YouTubePod.python", qos: .userInitiated)
+
+    nonisolated static func removeStaleWorkingDirectories() {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+        let entries = (try? fileManager.contentsOfDirectory(
+            at: temporaryDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        for entry in entries where isExtractionWorkingDirectory(entry) {
+            try? fileManager.removeItem(at: entry)
+        }
+    }
 
     func extract(
         from url: URL,
@@ -12,7 +27,7 @@ actor PythonAudioExtractor: AudioExtracting {
     ) async throws -> ExtractedAudio {
         let runID = UUID().uuidString
         let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("YouTubePod-\(runID)", isDirectory: true)
+            .appendingPathComponent("\(Self.workDirectoryPrefix)\(runID)", isDirectory: true)
         let cancellation = workDirectory.appendingPathComponent("cancel")
         let progressFile = workDirectory.appendingPathComponent("progress.json")
         try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
@@ -106,6 +121,15 @@ actor PythonAudioExtractor: AudioExtracting {
             throw ExtractionError.invalidResult
         }
         return try JSONDecoder().decode(PythonResultPayload.self, from: data)
+    }
+
+    private nonisolated static func isExtractionWorkingDirectory(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        guard name.hasPrefix(workDirectoryPrefix) else { return false }
+        let identifier = String(name.dropFirst(workDirectoryPrefix.count))
+        guard UUID(uuidString: identifier) != nil else { return false }
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+        return values?.isDirectory == true
     }
 }
 

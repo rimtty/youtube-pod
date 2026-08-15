@@ -13,7 +13,7 @@ iOS 27 / SwiftUI で動作する、技術検証用のオンデバイス音声ラ
 4. `open YouTubePod.xcodeproj`
 5. Signing Team と Bundle ID を自分の環境に合わせ、iOS 27 実機で実行
 
-Python 3.14、`yt-dlp 2026.07.04`、`yt-dlp-apple-webkit-jsi 0.1.1` は `bootstrap.sh` が固定バージョンで準備します。実行時のパッケージ更新は行いません。
+Python 3.14、`yt-dlp 2026.07.04`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `bootstrap.sh` が固定バージョンで準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。
 
 同梱CPythonのSimulator拡張はarm64向けです。Xcode 27をApple Silicon Macで使用してください。
 
@@ -51,3 +51,5 @@ YOUTUBEPOD_TEST_CANCEL_URL='https://www.youtube.com/watch?v=VIDEO_ID' \
 ```
 
 統合テストは公開動画をM4Aとして一時保存し、動画トラックがなく音声トラックがあることをAVFoundationで検証してから削除します。キャンセルテストは一時ディレクトリが残らないことも検証します。実機の最終確認項目は [TESTING.md](TESTING.md) を参照してください。
+
+音声抽出に一時的な通信・配信エラーが発生した場合は、yt-dlp内部の再試行に加えてアプリ側でも1秒、2秒、4秒の間隔で最大3回自動再試行します。未対応形式、非公開、年齢制限など恒久的な失敗は自動再試行せず、理由を表示します。
