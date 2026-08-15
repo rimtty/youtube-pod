@@ -101,6 +101,63 @@ struct WatchTransferEnvelopeTests {
         }
     }
 
+    @Test func inventoryApplicationContextRoundTripPreservesIdentityAndGeneration() throws {
+        let snapshot = WatchInventorySnapshot(
+            libraryInstanceID: UUID(uuidString: "E6722C37-252A-4EBE-8722-18FCE42E9708")!,
+            generation: 7,
+            generatedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            availableCapacity: 1_000_000,
+            entries: [WatchInventoryEntry(
+                youtubeID: "dQw4w9WgXcQ",
+                transferID: UUID(uuidString: "D725B720-D653-4B75-9D9E-772352ABF5C8")!,
+                revision: 3,
+                fileSize: 8_192
+            )]
+        )
+
+        let decoded = try WatchInventorySnapshot.decode(
+            applicationContext: snapshot.applicationContext()
+        )
+
+        #expect(decoded == snapshot)
+    }
+
+    @Test func deletionCommandRoundTripPreservesRevision() throws {
+        let command = WatchLibraryCommand(
+            commandID: UUID(uuidString: "49F1BC3D-660B-4AC8-93F3-013454593FE3")!,
+            kind: .delete,
+            youtubeID: "dQw4w9WgXcQ",
+            revision: 4
+        )
+
+        let decoded = try WatchLibraryCommand.decode(userInfo: command.userInfo())
+
+        #expect(decoded == command)
+    }
+
+    @Test func invalidInventoryAndDeletionCommandFailClosed() {
+        let snapshot = WatchInventorySnapshot(
+            libraryInstanceID: UUID(),
+            generation: -1,
+            generatedAt: .now,
+            availableCapacity: nil,
+            entries: []
+        )
+        #expect(throws: WatchTransferProtocolError.malformedPayload) {
+            try snapshot.applicationContext()
+        }
+
+        let command = WatchLibraryCommand(
+            commandID: UUID(),
+            kind: .delete,
+            youtubeID: "invalid",
+            revision: 1
+        )
+        #expect(throws: WatchTransferProtocolError.invalidYouTubeID) {
+            try command.userInfo()
+        }
+    }
+
     private func fixture(
         schemaVersion: Int = WatchTransferEnvelope.currentSchemaVersion,
         revision: Int64 = 3,
