@@ -37,3 +37,11 @@ jobs:
 
       - name: Run Apple Watch Series 9+ simulator tests
         run: ./scripts/verify_watch.sh
+
+      - name: Run static analysis
+        run: |
+          xcodebuild analyze \
+            -project YouTubePod.xcodeproj \
+            -scheme YouTubePod \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath /tmp/youtubepod-analyze-derived-data

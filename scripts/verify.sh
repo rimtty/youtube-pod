@@ -35,3 +35,8 @@ xcodebuild test \
     "YOUTUBEPOD_TEST_SHORTS_URL=${YOUTUBEPOD_TEST_SHORTS_URL:-}" \
     "YOUTUBEPOD_TEST_LONG_URL=${YOUTUBEPOD_TEST_LONG_URL:-}" \
     "YOUTUBEPOD_TEST_CANCEL_URL=${YOUTUBEPOD_TEST_CANCEL_URL:-}"
+
+IPHONE_APP="$DERIVED_DATA/Build/Products/Debug-iphonesimulator/YouTubePod.app"
+python3 scripts/verify_privacy_manifests.py \
+    --iphone "$IPHONE_APP/PrivacyInfo.xcprivacy" \
+    --watch "$IPHONE_APP/Watch/YouTubePodWatch.app/PrivacyInfo.xcprivacy"

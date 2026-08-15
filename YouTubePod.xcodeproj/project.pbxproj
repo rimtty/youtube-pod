@@ -12,6 +12,7 @@
 		07F098B065FA890B601392B7 /* WatchNowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F21B79C2A27FB9BB14562982 /* WatchNowPlayingView.swift */; };
 		0A1A05E4C5AF5BE2F42EEE35 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04C89E86F6F5782E9A0CDBA3 /* DesignSystem.swift */; };
 		14E6FB9DE80532300BD55461 /* Protocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF1F879337E77441B90173 /* Protocols.swift */; };
+		160824C2143A76520454A4D1 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4DF59C5505D063828FBE7CEC /* PrivacyInfo.xcprivacy */; };
 		164289CF4085781ACED0DBFD /* WatchCapacityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79AD702E28F627326D1D2B00 /* WatchCapacityChecker.swift */; };
 		1E30DE1BD799D121918AB3A2 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = FD1CCA0C071673B7CBABD275 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		233530C72F9679D4A70EAF7C /* SubscriptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEC8820DB6F98C9905112D1 /* SubscriptionsView.swift */; };
@@ -36,6 +37,7 @@
 		60DB56C78ECD54D0655E0082 /* WatchAudioLibraryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36083239230144DE7DA56E93 /* WatchAudioLibraryServiceTests.swift */; };
 		6714AA556D6B8C0D5B64FDCF /* WatchSavedAudioModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85422FE1666FF49BEA4EA0D7 /* WatchSavedAudioModelTests.swift */; };
 		6BB2F94A12A491757926E063 /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB3B6D6907405BF886AF9F8 /* WatchRootView.swift */; };
+		6F20BC930C27655C4A883247 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 19994901F44058463351D767 /* PrivacyInfo.xcprivacy */; };
 		779762809D5765754F692BAD /* WatchTransferEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */; };
 		794AD94AD44A15F07C81C8FD /* WatchTransfersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B1E3C6F313B746E334E3EE6 /* WatchTransfersView.swift */; };
 		79701270A23881DED6DFCC1A /* WatchSessionReceiverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 322893D08CB6846C6B6EA1EB /* WatchSessionReceiverTests.swift */; };
@@ -133,6 +135,7 @@
 		0BE7F0247E335E795C23A65F /* WatchLibraryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLibraryRow.swift; sourceTree = "<group>"; };
 		0E579C68BB42B0407B7EFC0E /* DownloadManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManagerTests.swift; sourceTree = "<group>"; };
 		0FE522626BB6242CB4413740 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		19994901F44058463351D767 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		1BAE31885609C3FC49F159A8 /* PythonAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonAudioExtractor.swift; sourceTree = "<group>"; };
 		2575879BBB9A819198F22C39 /* WatchAudioValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioValidator.swift; sourceTree = "<group>"; };
 		280A3139569100EC7C9EF820 /* WatchTransferSnapshotStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTransferSnapshotStoreTests.swift; sourceTree = "<group>"; };
@@ -147,6 +150,7 @@
 		3D0D5526A070535A974E9A0A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		49D938277CED715FEDC875BB /* DisplayFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayFormatterTests.swift; sourceTree = "<group>"; };
 		4A161B732F2924D0196A1B91 /* YouTubePod.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YouTubePod.entitlements; sourceTree = "<group>"; };
+		4DF59C5505D063828FBE7CEC /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		4F390528FCB670559D4033BE /* WatchAudioValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioValidatorTests.swift; sourceTree = "<group>"; };
 		4FA90625534B450F0DD07D0C /* WatchTests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WatchTests.xcconfig; sourceTree = "<group>"; };
 		501E8811AF44B280943CC212 /* GoogleAuthServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthServiceTests.swift; sourceTree = "<group>"; };
@@ -238,6 +242,7 @@
 			children = (
 				C9715E95D88980FDA472036E /* Assets.xcassets */,
 				53BEB435BC9F0BB78274C9A6 /* Info.plist */,
+				19994901F44058463351D767 /* PrivacyInfo.xcprivacy */,
 				5FC798930D71D3B731FBA658 /* App */,
 				E0F00B151C1D41B5CEF9660B /* Domain */,
 				06A68F2FCE875ED60A974D8F /* Services */,
@@ -482,6 +487,7 @@
 			children = (
 				C1F8689FB85CA39851BB9076 /* Assets.xcassets */,
 				776B3C239D404D1E559344E2 /* Info.plist */,
+				4DF59C5505D063828FBE7CEC /* PrivacyInfo.xcprivacy */,
 				4A161B732F2924D0196A1B91 /* YouTubePod.entitlements */,
 				8F5348E1B09F42BCF7934A4B /* App */,
 				DF62E33A1228BC2E0C84E870 /* Domain */,
@@ -620,6 +626,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BBFDF51D4543BCF607D478DD /* Assets.xcassets in Resources */,
+				6F20BC930C27655C4A883247 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -628,6 +635,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5004E8C5E19457E0109DBDA5 /* Assets.xcassets in Resources */,
+				160824C2143A76520454A4D1 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

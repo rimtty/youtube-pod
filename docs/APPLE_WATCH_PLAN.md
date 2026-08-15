@@ -366,6 +366,6 @@ WatchConnectivityのファイル受信はSimulatorでは最終検証できない
 - 音声ルートが利用できない場合、再生開始に失敗する
 - 複数WatchのAuto Switchで、iPhone側の「転送済み」状態が現在のWatchと一致しなくなる
 - SwiftDataモデル追加前にmigrationを整備しないと、既存ライブラリを失うリスクがある
-- 容量確認APIとWatchターゲット追加に伴い、`PrivacyInfo.xcprivacy`とRequired Reason API宣言を再監査する必要がある
+- iPhone／Watch各バンドルへ`PrivacyInfo.xcprivacy`を同梱し、Required Reason API宣言をCIで継続監査する
 
 PoCは「現在アクティブな1台のApple Watch」「直列転送」「WatchとiPhoneの再生位置は別管理」に限定して開始する。
