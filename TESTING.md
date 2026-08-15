@@ -11,7 +11,7 @@
 ## 現在の自動検証結果（2026-08-16）
 
 - Xcode 27.0 / Apple Swift 6.4 / iOS 27.0 Simulator
-- Debug全テスト: 109件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
+- Debug全テスト: 124件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
 - 通常公開動画、Shorts、30分超の公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
 - 長尺取得の途中キャンセル、追加リトライ、起動時の残存一時フォルダ清掃を確認
 - `yt-dlp-ejs 0.8.0`を固定同梱し、実行時ダウンロードなしでWebKit JavaScriptチャレンジ処理を確認
@@ -49,6 +49,11 @@
 - WCSession再activation時に送信完了callbackを失っても、後続の直列キューが停止しないことを確認
 - 転送元削除後も独立スナップショットを維持し、atomic clone、孤立snapshot／中断staging cleanup、先頭snapshot欠落後のキュー継続を確認
 - 既存の未versioned `SavedAudio`ストアから複合Schemaを開き、全メタデータ保持と再オープンを確認。段階移行は実ストアで`unknown model version`となるため採用せず、データ削除fallbackも行わない
+- iPhoneはWatchの`applicationContext`在庫を起動時と更新時に受信し、library instance／generation／時刻／transfer ID／revision／ファイルサイズを照合することを確認
+- 同generationの競合在庫、古いWatch instance、重複項目、サイズ不一致を拒否し、欠落項目を即削除せず再照合待ちにすることを確認
+- Watch削除要求をSwiftDataへ先に永続化してから送信し、再activation時の再送、重複要求、遅延import ACKによる削除状態の復活防止を確認
+- inventory不一致後は、iPhoneの元音声から新しいsnapshot／revisionを作る再転送で復旧し、元音声がない場合は再転送を案内しない
+- iPhoneライブラリの44pt Watch転送操作、進捗／キャンセル／再試行／削除、独立したWatch管理タブ、Google未ログイン時のライブラリ＋Watch導線を実装
 
 `./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`は利用可能なApple Watch Series 9以降のSimulator（Series 9を優先）で回帰テストを実行する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 
@@ -69,6 +74,9 @@
 - [ ] Watchの容量不足時に既存ライブラリが壊れない
 - [ ] Watchから削除後に音声、画像、SwiftDataがすべて消える
 - [ ] iPhoneの元音声を削除してもWatch側コピーを再生できる
+- [ ] iPhoneのWatchタブで件数、空き容量、最終同期時刻が実機Watchの状態と一致する
+- [ ] Watchへの転送、キャンセル、再試行、Watchから削除がiPhoneの管理タブへ正しく反映される
+- [ ] Google未ログイン／iPhone機内モードでも、iPhoneのWatch管理タブとWatchのローカル再生を利用できる
 
 ## iOS 27実機の合格条件
 

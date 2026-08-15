@@ -548,6 +548,358 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertNil(fixture.service.liveProgress[source.youtubeID])
     }
 
+    func testMatchingInventoryConfirmsExactIdentityAndPublishesLatestSnapshot() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "inventory01")
+        record.state = .reconciliationRequired
+        fixture.context.insert(record)
+        try fixture.context.save()
+        let snapshot = inventory(
+            instanceID: UUID(), generation: 4, generatedAt: Date(timeIntervalSince1970: 400),
+            entries: [entry(for: record)]
+        )
+
+        fixture.service.start()
+        fixture.transport.emit(.inventory(snapshot))
+
+        XCTAssertEqual(record.state, .availableOnWatch)
+        XCTAssertTrue(record.watchImportConfirmed)
+        XCTAssertEqual(record.confirmedAt, snapshot.generatedAt)
+        XCTAssertEqual(fixture.service.latestInventory, snapshot)
+    }
+
+    func testOlderAndConflictingSameGenerationInventoriesCannotRegressState() throws {
+        let cursorStore = WatchInventoryCursorStoreStub()
+        let fixture = try makeFixture(start: false, inventoryCursorStore: cursorStore)
+        let record = availableRecord(id: "inventory02")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        let instanceID = UUID()
+        let current = inventory(
+            instanceID: instanceID, generation: 8, generatedAt: Date(timeIntervalSince1970: 800),
+            entries: [entry(for: record)]
+        )
+        fixture.service.start()
+        fixture.transport.emit(.inventory(current))
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: instanceID, generation: 7, generatedAt: Date(timeIntervalSince1970: 900),
+            entries: []
+        )))
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: instanceID, generation: 8, generatedAt: Date(timeIntervalSince1970: 901),
+            entries: []
+        )))
+
+        XCTAssertEqual(record.state, .availableOnWatch)
+        XCTAssertEqual(fixture.service.latestInventory, current)
+    }
+
+    func testOlderPublicationAtSameGenerationCannotRegressLatestInventory() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "inventory08")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        let instanceID = UUID()
+        let current = inventory(
+            instanceID: instanceID, generation: 2, generatedAt: Date(timeIntervalSince1970: 200),
+            entries: [entry(for: record)]
+        )
+        fixture.service.start()
+        fixture.transport.emit(.inventory(current))
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: instanceID,
+            generation: 2,
+            generatedAt: Date(timeIntervalSince1970: 199),
+            entries: [entry(for: record)]
+        )))
+
+        XCTAssertEqual(fixture.service.latestInventory, current)
+    }
+
+    func testRefreshStateReactivatesTransportWithoutCreatingTransfers() throws {
+        let fixture = try makeFixture(start: false)
+        fixture.service.start()
+        XCTAssertEqual(fixture.transport.activationCount, 1)
+
+        fixture.service.refreshState()
+
+        XCTAssertEqual(fixture.transport.activationCount, 2)
+        XCTAssertTrue(fixture.transport.sent.isEmpty)
+    }
+
+    func testMissingInventoryEntryNeverMarksAvailableRecordRemoved() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "inventory03")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: UUID(), generation: 1, generatedAt: .now, entries: []
+        )))
+
+        XCTAssertEqual(record.state, .reconciliationRequired)
+        XCTAssertEqual(record.lastErrorCode, "watch-inventory-missing")
+        XCTAssertNotEqual(record.state, .removedFromWatch)
+    }
+
+    func testFreshEnqueueRecreatesSnapshotForReconciliationRequiredRecord() async throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "inventory10")
+        record.state = .reconciliationRequired
+        fixture.context.insert(record)
+        try fixture.context.save()
+        let oldTransferID = record.transferID
+        let oldRevision = record.revision
+        let source = try makeSource(id: record.youtubeID, artwork: true)
+        try await fixture.service.enqueue(source)
+
+        XCTAssertNotEqual(record.transferID, oldTransferID)
+        XCTAssertEqual(record.revision, oldRevision + 1)
+        XCTAssertEqual(record.state, .transferring)
+        XCTAssertEqual(Set(fixture.transport.sent.map(\.envelope.transferID)), [record.transferID])
+        XCTAssertEqual(Set(fixture.transport.sent.map(\.envelope.revision)), [oldRevision + 1])
+        let snapshotExists = await fixture.snapshots.contains(record.transferID)
+        XCTAssertTrue(snapshotExists)
+    }
+
+    func testDifferentIdentityAndFileSizeCannotConfirmAvailability() throws {
+        let fixture = try makeFixture(start: false)
+        let identityConflict = availableRecord(id: "inventory04")
+        let sizeConflict = availableRecord(id: "inventory05")
+        let revisionConflict = availableRecord(id: "inventory09")
+        fixture.context.insert(identityConflict)
+        fixture.context.insert(sizeConflict)
+        fixture.context.insert(revisionConflict)
+        try fixture.context.save()
+        fixture.service.start()
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: UUID(),
+            generation: 1,
+            generatedAt: .now,
+            entries: [
+                WatchInventoryEntry(
+                    youtubeID: identityConflict.youtubeID,
+                    transferID: UUID(),
+                    revision: identityConflict.revision,
+                    fileSize: identityConflict.sourceFileSize
+                ),
+                WatchInventoryEntry(
+                    youtubeID: sizeConflict.youtubeID,
+                    transferID: sizeConflict.transferID,
+                    revision: sizeConflict.revision,
+                    fileSize: sizeConflict.sourceFileSize + 1
+                ),
+                WatchInventoryEntry(
+                    youtubeID: revisionConflict.youtubeID,
+                    transferID: revisionConflict.transferID,
+                    revision: revisionConflict.revision - 1,
+                    fileSize: revisionConflict.sourceFileSize
+                )
+            ]
+        )))
+
+        XCTAssertEqual(identityConflict.state, .reconciliationRequired)
+        XCTAssertEqual(identityConflict.lastErrorCode, "watch-inventory-conflict")
+        XCTAssertEqual(sizeConflict.state, .reconciliationRequired)
+        XCTAssertEqual(sizeConflict.lastErrorCode, "watch-inventory-size")
+        XCTAssertEqual(revisionConflict.state, .reconciliationRequired)
+        XCTAssertEqual(revisionConflict.lastErrorCode, "watch-inventory-conflict")
+    }
+
+    func testNewLibraryInstanceSupersedesOldInstanceAndDelayedOldSnapshotIsIgnored() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "inventory06")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+        let oldInstance = UUID()
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: oldInstance,
+            generation: 100,
+            generatedAt: Date(timeIntervalSince1970: 100),
+            entries: [entry(for: record)]
+        )))
+        let resetSnapshot = inventory(
+            instanceID: UUID(), generation: 0, generatedAt: Date(timeIntervalSince1970: 200),
+            entries: []
+        )
+        fixture.transport.emit(.inventory(resetSnapshot))
+        XCTAssertEqual(record.state, .reconciliationRequired)
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: oldInstance,
+            generation: 101,
+            generatedAt: Date(timeIntervalSince1970: 150),
+            entries: [entry(for: record)]
+        )))
+
+        XCTAssertEqual(record.state, .reconciliationRequired)
+        XCTAssertEqual(fixture.service.latestInventory, resetSnapshot)
+    }
+
+    func testInventoryCursorSurvivesServiceRestart() throws {
+        let cursorStore = WatchInventoryCursorStoreStub()
+        let fixture = try makeFixture(start: false, inventoryCursorStore: cursorStore)
+        let record = availableRecord(id: "inventory07")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        let instanceID = UUID()
+        let current = inventory(
+            instanceID: instanceID, generation: 3, generatedAt: Date(timeIntervalSince1970: 300),
+            entries: [entry(for: record)]
+        )
+        fixture.service.start()
+        fixture.transport.emit(.inventory(current))
+
+        let restartedTransport = WatchTransportStub(status: fixture.transport.status)
+        let restarted = PhoneWatchTransferService(
+            modelContext: fixture.context,
+            transport: restartedTransport,
+            snapshots: fixture.snapshots,
+            inventoryCursorStore: cursorStore,
+            automaticRetryDelays: []
+        )
+        restarted.start()
+        restartedTransport.emit(.inventory(inventory(
+            instanceID: instanceID,
+            generation: 2,
+            generatedAt: Date(timeIntervalSince1970: 400),
+            entries: []
+        )))
+
+        XCTAssertEqual(record.state, .availableOnWatch)
+        XCTAssertNil(restarted.latestInventory)
+    }
+
+    func testDeletionPersistsIntentAndUsesExistingTransferIdentity() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "deletecmd01")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+
+        try fixture.service.requestDeletion(videoID: record.youtubeID)
+
+        XCTAssertEqual(record.state, .deletionPending)
+        let command = try XCTUnwrap(fixture.transport.deletionCommands.last)
+        XCTAssertEqual(command.commandID, record.transferID)
+        XCTAssertEqual(command.revision, record.revision)
+        XCTAssertEqual(command.youtubeID, record.youtubeID)
+    }
+
+    func testDeletionSendFailureKeepsDurableIntentAndRetryIsIdempotent() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "deletecmd02")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+        fixture.transport.deletionError = WatchTransportStubError.sendFailed
+
+        XCTAssertThrowsError(try fixture.service.requestDeletion(videoID: record.youtubeID))
+        XCTAssertEqual(record.state, .deletionPending)
+        XCTAssertEqual(record.lastErrorCode, "delete-send")
+
+        fixture.transport.deletionError = nil
+        try fixture.service.requestDeletion(videoID: record.youtubeID)
+        XCTAssertEqual(fixture.transport.deletionCommands.count, 1)
+        XCTAssertEqual(fixture.transport.deletionCommands.first?.commandID, record.transferID)
+    }
+
+    func testDuplicateDeletionRequestsReuseTheSameIdempotentCommandIdentity() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "deletecmd06")
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+
+        try fixture.service.requestDeletion(videoID: record.youtubeID)
+        try fixture.service.requestDeletion(videoID: record.youtubeID)
+
+        XCTAssertEqual(fixture.transport.deletionCommands.count, 2)
+        XCTAssertEqual(
+            Set(fixture.transport.deletionCommands.map(\.commandID)),
+            [record.transferID]
+        )
+        XCTAssertEqual(
+            Set(fixture.transport.deletionCommands.map(\.revision)),
+            [record.revision]
+        )
+    }
+
+    func testActivationResendsPersistedDeletionAndDeletedAckCompletesIt() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "deletecmd03")
+        record.state = .deletionPending
+        fixture.context.insert(record)
+        try fixture.context.save()
+
+        fixture.service.start()
+        XCTAssertEqual(fixture.transport.deletionCommands.count, 1)
+        fixture.transport.emit(.acknowledgement(WatchTransferAcknowledgement(
+            transferID: record.transferID,
+            revision: record.revision,
+            youtubeID: record.youtubeID,
+            outcome: .deleted
+        )))
+
+        XCTAssertEqual(record.state, .removedFromWatch)
+    }
+
+    func testDelayedImportAndInventoryCannotUndoDeletionIntentOrConfirmedDeletion() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "deletecmd04")
+        record.state = .deletionPending
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+        let imported = WatchTransferAcknowledgement(
+            transferID: record.transferID,
+            revision: record.revision,
+            youtubeID: record.youtubeID,
+            outcome: .imported
+        )
+        fixture.transport.emit(.acknowledgement(imported))
+        XCTAssertEqual(record.state, .deletionPending)
+
+        fixture.transport.emit(.acknowledgement(WatchTransferAcknowledgement(
+            transferID: record.transferID,
+            revision: record.revision,
+            youtubeID: record.youtubeID,
+            outcome: .deleted
+        )))
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: UUID(), generation: 1, generatedAt: .now,
+            entries: [entry(for: record)]
+        )))
+        fixture.transport.emit(.acknowledgement(WatchTransferAcknowledgement(
+            transferID: record.transferID,
+            revision: record.revision,
+            youtubeID: record.youtubeID,
+            outcome: .failed,
+            message: "late failure"
+        )))
+
+        XCTAssertEqual(record.state, .removedFromWatch)
+    }
+
+    func testInventoryAbsenceCompletesOnlyPendingDeletion() throws {
+        let fixture = try makeFixture(start: false)
+        let record = availableRecord(id: "deletecmd05")
+        record.state = .deletionPending
+        fixture.context.insert(record)
+        try fixture.context.save()
+        fixture.service.start()
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: UUID(), generation: 2, generatedAt: .now, entries: []
+        )))
+
+        XCTAssertEqual(record.state, .removedFromWatch)
+    }
+
     private func makeFixture(
         status: WatchConnectionStatus = WatchConnectionStatus(
             activation: .activated,
@@ -557,7 +909,8 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         automaticRetryDelays: [Duration] = [],
         cloneDelay: Duration? = nil,
         confirmationTimeout: TimeInterval = 30 * 60,
-        start: Bool = true
+        start: Bool = true,
+        inventoryCursorStore: WatchInventoryCursorStoreStub = WatchInventoryCursorStoreStub()
     ) throws -> Fixture {
         let container = try ModelContainer(
             for: SavedAudio.self,
@@ -570,6 +923,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             modelContext: container.mainContext,
             transport: transport,
             snapshots: snapshots,
+            inventoryCursorStore: inventoryCursorStore,
             automaticRetryDelays: automaticRetryDelays,
             confirmationTimeout: confirmationTimeout
         )
@@ -579,7 +933,51 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             context: container.mainContext,
             transport: transport,
             snapshots: snapshots,
+            inventoryCursorStore: inventoryCursorStore,
             service: service
+        )
+    }
+
+    private func availableRecord(id: String) -> WatchTransferRecord {
+        WatchTransferRecord(
+            youtubeID: id,
+            title: "Title \(id)",
+            channelTitle: "Channel",
+            publishedAt: .now,
+            duration: 120,
+            savedViewCount: 42,
+            sourceFileSize: 64,
+            transferID: UUID(),
+            revision: 3,
+            state: .availableOnWatch,
+            lastKnownProgress: 1,
+            audioDeliveryFinished: true,
+            artworkDeliveryFinished: true,
+            watchImportConfirmed: true
+        )
+    }
+
+    private func entry(for record: WatchTransferRecord) -> WatchInventoryEntry {
+        WatchInventoryEntry(
+            youtubeID: record.youtubeID,
+            transferID: record.transferID,
+            revision: record.revision,
+            fileSize: record.sourceFileSize
+        )
+    }
+
+    private func inventory(
+        instanceID: UUID,
+        generation: Int64,
+        generatedAt: Date,
+        entries: [WatchInventoryEntry]
+    ) -> WatchInventorySnapshot {
+        WatchInventorySnapshot(
+            libraryInstanceID: instanceID,
+            generation: generation,
+            generatedAt: generatedAt,
+            availableCapacity: 123_456,
+            entries: entries
         )
     }
 
@@ -648,6 +1046,7 @@ private struct Fixture {
     let context: ModelContext
     let transport: WatchTransportStub
     let snapshots: WatchSnapshotStoreStub
+    let inventoryCursorStore: WatchInventoryCursorStoreStub
     let service: PhoneWatchTransferService
 }
 
@@ -657,13 +1056,17 @@ private final class WatchTransportStub: WatchConnectivityTransport {
     var eventHandler: (@MainActor @Sendable (WatchConnectivityEvent) -> Void)?
     private(set) var sent: [(url: URL, envelope: WatchTransferEnvelope)] = []
     private(set) var cancelledTransferIDs: [UUID] = []
+    private(set) var deletionCommands: [WatchLibraryCommand] = []
+    var deletionError: WatchTransportStubError?
     var outstanding: [OutstandingWatchFile] = []
+    private(set) var activationCount = 0
 
     init(status: WatchConnectionStatus) {
         self.status = status
     }
 
     func activate() {
+        activationCount += 1
         eventHandler?(.statusChanged(status))
     }
 
@@ -678,6 +1081,11 @@ private final class WatchTransportStub: WatchConnectivityTransport {
         ))
     }
 
+    func sendDeletionCommand(_ command: WatchLibraryCommand) throws {
+        if let deletionError { throw deletionError }
+        deletionCommands.append(command)
+    }
+
     func cancelFiles(transferID: UUID) {
         cancelledTransferIDs.append(transferID)
     }
@@ -687,6 +1095,23 @@ private final class WatchTransportStub: WatchConnectivityTransport {
             outstanding.removeAll { $0.key == key }
         }
         eventHandler?(event)
+    }
+}
+
+private enum WatchTransportStubError: LocalizedError {
+    case sendFailed
+
+    var errorDescription: String? { "Deletion send failed" }
+}
+
+@MainActor
+private final class WatchInventoryCursorStoreStub: WatchInventoryCursorStoring {
+    private(set) var cursor: WatchInventoryCursor?
+
+    func load() -> WatchInventoryCursor? { cursor }
+
+    func save(_ cursor: WatchInventoryCursor) throws {
+        self.cursor = cursor
     }
 }
 

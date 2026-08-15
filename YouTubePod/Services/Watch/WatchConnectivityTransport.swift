@@ -45,6 +45,7 @@ enum WatchConnectivityEvent: Sendable {
     case progress(WatchTransferKey, Double)
     case fileFinished(WatchTransferKey, WatchTransportFailure?)
     case acknowledgement(WatchTransferAcknowledgement)
+    case inventory(WatchInventorySnapshot)
 }
 
 @MainActor
@@ -55,5 +56,6 @@ protocol WatchConnectivityTransport: AnyObject {
     func activate()
     func outstandingFiles() -> [OutstandingWatchFile]
     func enqueueFile(at url: URL, envelope: WatchTransferEnvelope) throws
+    func sendDeletionCommand(_ command: WatchLibraryCommand) throws
     func cancelFiles(transferID: UUID)
 }
