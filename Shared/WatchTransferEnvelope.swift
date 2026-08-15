@@ -157,6 +157,8 @@ struct WatchTransferEnvelope: Codable, Equatable, Sendable {
 }
 
 struct WatchTransferAcknowledgement: Codable, Equatable, Sendable {
+    static let userInfoKey = "com.rimtty.YouTubePod.watchTransferAcknowledgement"
+
     let schemaVersion: Int
     let transferID: UUID
     let revision: Int64
@@ -178,6 +180,38 @@ struct WatchTransferAcknowledgement: Codable, Equatable, Sendable {
         self.youtubeID = youtubeID
         self.outcome = outcome
         self.message = message
+    }
+
+    func validated() throws -> Self {
+        guard schemaVersion == WatchTransferEnvelope.currentSchemaVersion else {
+            throw WatchTransferProtocolError.unsupportedSchema(schemaVersion)
+        }
+        guard transferID != UUID.nil else {
+            throw WatchTransferProtocolError.invalidTransferID
+        }
+        guard revision >= 0 else {
+            throw WatchTransferProtocolError.invalidRevision
+        }
+        try validateYouTubeID(youtubeID)
+        return self
+    }
+
+    func userInfo() throws -> [String: Any] {
+        _ = try validated()
+        return [Self.userInfoKey: try JSONEncoder().encode(self)]
+    }
+
+    static func decode(userInfo: [String: Any]) throws -> Self {
+        guard let payload = userInfo[userInfoKey] as? Data else {
+            throw WatchTransferProtocolError.missingEnvelope
+        }
+        do {
+            return try JSONDecoder().decode(Self.self, from: payload).validated()
+        } catch let error as WatchTransferProtocolError {
+            throw error
+        } catch {
+            throw WatchTransferProtocolError.malformedPayload
+        }
     }
 }
 
@@ -208,4 +242,14 @@ struct WatchInventorySnapshot: Codable, Equatable, Sendable {
 
 private extension UUID {
     static let `nil` = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+}
+
+private func validateYouTubeID(_ youtubeID: String) throws {
+    let scalars = youtubeID.unicodeScalars
+    let allowed = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+    )
+    guard scalars.count == 11, scalars.allSatisfy(allowed.contains) else {
+        throw WatchTransferProtocolError.invalidYouTubeID
+    }
 }

@@ -64,6 +64,43 @@ struct WatchTransferEnvelopeTests {
         }
     }
 
+    @Test func acknowledgementRoundTripPreservesIdentityAndOutcome() throws {
+        let acknowledgement = WatchTransferAcknowledgement(
+            transferID: UUID(uuidString: "D725B720-D653-4B75-9D9E-772352ABF5C8")!,
+            revision: 3,
+            youtubeID: "dQw4w9WgXcQ",
+            outcome: .imported,
+            message: nil
+        )
+
+        let decoded = try WatchTransferAcknowledgement.decode(
+            userInfo: acknowledgement.userInfo()
+        )
+
+        #expect(decoded == acknowledgement)
+    }
+
+    @Test func malformedAcknowledgementIsRejected() {
+        #expect(throws: WatchTransferProtocolError.malformedPayload) {
+            try WatchTransferAcknowledgement.decode(
+                userInfo: [WatchTransferAcknowledgement.userInfoKey: Data("not-json".utf8)]
+            )
+        }
+    }
+
+    @Test func invalidAcknowledgementIdentityIsRejected() {
+        let acknowledgement = WatchTransferAcknowledgement(
+            transferID: UUID(uuidString: "D725B720-D653-4B75-9D9E-772352ABF5C8")!,
+            revision: -1,
+            youtubeID: "not-valid",
+            outcome: .failed
+        )
+
+        #expect(throws: WatchTransferProtocolError.invalidRevision) {
+            try acknowledgement.userInfo()
+        }
+    }
+
     private func fixture(
         schemaVersion: Int = WatchTransferEnvelope.currentSchemaVersion,
         revision: Int64 = 3,

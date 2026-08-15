@@ -11,7 +11,7 @@
 ## 現在の自動検証結果（2026-08-16）
 
 - Xcode 27.0 / Apple Swift 6.4 / iOS 27.0 Simulator
-- Debug全テスト: 82件、失敗0件（ネットワーク実動画4件は通常実行ではスキップ）
+- Debug全テスト: 109件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
 - 通常公開動画、Shorts、30分超の公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
 - 長尺取得の途中キャンセル、追加リトライ、起動時の残存一時フォルダ清掃を確認
 - `yt-dlp-ejs 0.8.0`を固定同梱し、実行時ダウンロードなしでWebKit JavaScriptチャレンジ処理を確認
@@ -31,7 +31,13 @@
 - 保存済み音声の削除後にダウンロード完了表示を破棄し、キュー末尾操作でも再生履歴を0秒で上書きしないことを確認
 - 起動時に中断された隠しステージングM4Aも孤児ファイルとして清掃することを確認
 - watchOS 27 / Apple Watch Series 9（45mm）Simulator: Watchアプリのビルド、iPhoneアプリへの埋め込み、起動に成功
-- Watch転送envelopeのencode/decode、schema不一致、破損payload、不正値、再生位置clamp: 6件、失敗0件
+- Watch転送envelope／ACKのencode/decode、schema不一致、破損payload、不正値、再生位置clamp: 9件、失敗0件
+- iPhone側Watch転送は、直列キュー、重複抑止、進捗、キャンセル、最大2回の自動再試行、stale ACK拒否、送信完了とWatch ACKの順序入替、再起動時照合をスタブで確認
+- 新しい転送／Watch ACKによる古い自動再試行の無効化、Watch取込確認タイムアウト、タイムアウト後の遅延ACK受理を確認
+- 自動再試行のsnapshot clone中に遅延ACKが届いても、確認済みrevisionを上書きしないことを確認
+- WCSession再activation時に送信完了callbackを失っても、後続の直列キューが停止しないことを確認
+- 転送元削除後も独立スナップショットを維持し、atomic clone、孤立snapshot／中断staging cleanup、先頭snapshot欠落後のキュー継続を確認
+- 既存の未versioned `SavedAudio`ストアから複合Schemaを開き、全メタデータ保持と再オープンを確認。段階移行は実ストアで`unknown model version`となるため採用せず、データ削除fallbackも行わない
 
 `./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`は利用可能なApple Watch Series 9以降のSimulator（Series 9を優先）で回帰テストを実行する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 

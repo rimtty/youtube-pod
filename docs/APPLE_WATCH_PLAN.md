@@ -143,7 +143,7 @@ flowchart LR
 - `failed`
 - `reconciliationRequired`
 
-`YouTubePodApp`のModelContainerへモデルを追加する前に、現在の`SavedAudio`ストアをVersionedSchemaへ移し、明示的な軽量migrationを用意する。
+既存リリースの`SavedAudio`ストアはVersionedSchema情報を持たない。Xcode 27ではこの実ストアを後付けの段階移行で開くと`unknown model version`になることを確認したため、Watchモデル追加時は未versionedの複合Schemaによる推論軽量migrationを使う。旧ストアを実際に作成して全フィールド保持を検証し、失敗時にストア削除へフォールバックしない。VersionedSchemaへの切り替えは、既存ストアを安全にbootstrapする専用移行を用意できた段階で別途行う。
 
 ### Watch: `WatchSavedAudio`
 
@@ -239,7 +239,7 @@ Watch側にはGoogleSignIn、PythonKit、CPython、yt-dlp、YouTube APIクライ
 - `YouTubePod/App/AppEnvironment.swift`
   - `PhoneWatchTransferService`の生成と起動
 - `YouTubePod/App/YouTubePodApp.swift`
-  - VersionedSchemaと`WatchTransferRecord`追加
+  - 既存未versionedストアと互換な複合Schemaへ`WatchTransferRecord`追加
 
 ### 新規ファイル候補
 
