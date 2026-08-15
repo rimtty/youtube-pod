@@ -117,6 +117,36 @@ final class YouTubeDataClientTests: XCTestCase {
         XCTAssertEqual(requestCount.value, 2)
     }
 
+    func testPopularVideosCacheExpiresAtFifteenMinuteBoundary() async throws {
+        let requestCount = LockedCounter()
+        let clock = LockedDate(Date(timeIntervalSince1970: 1_000))
+        URLProtocolStub.handler = { request in
+            requestCount.increment()
+            let payload = #"{"items":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let sessionID = UUID()
+        let client = YouTubeDataClient(
+            credentialProvider: {
+                YouTubeCredential(accessToken: "token", accountID: "account", sessionID: sessionID)
+            },
+            session: URLSession(configuration: configuration),
+            cacheLifetime: 15 * 60,
+            now: { clock.value }
+        )
+
+        _ = try await client.popularVideos(regionCode: "JP")
+        clock.advance(by: 15 * 60 - 1)
+        _ = try await client.popularVideos(regionCode: "JP")
+        XCTAssertEqual(requestCount.value, 1)
+
+        clock.advance(by: 1)
+        _ = try await client.popularVideos(regionCode: "JP")
+        XCTAssertEqual(requestCount.value, 2)
+    }
+
     func testQuotaErrorIsMappedFrom403() async {
         URLProtocolStub.handler = { request in
             let payload = #"{"error":{"message":"quota exceeded"}}"#
@@ -129,6 +159,40 @@ final class YouTubeDataClientTests: XCTestCase {
             XCTFail("Expected quota error")
         } catch CatalogError.quotaOrPermission(let detail) {
             XCTAssertEqual(detail, "quota exceeded")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testRateLimitErrorIsMappedFrom429() async {
+        URLProtocolStub.handler = { request in
+            let payload = #"{"error":{"message":"rate limited"}}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.popularVideos(regionCode: "JP")
+            XCTFail("Expected quota or rate-limit error")
+        } catch CatalogError.quotaOrPermission(let detail) {
+            XCTAssertEqual(detail, "rate limited")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testServerErrorIsMappedFrom500() async {
+        URLProtocolStub.handler = { request in
+            let payload = #"{"error":{"message":"backend unavailable"}}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.popularVideos(regionCode: "JP")
+            XCTFail("Expected server error")
+        } catch CatalogError.server(let detail) {
+            XCTAssertEqual(detail, "backend unavailable")
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -527,6 +591,34 @@ final class YouTubeDataClientTests: XCTestCase {
         }
     }
 
+    func testRefreshStatisticsBatchesFiftyOneIDsIntoFiftyAndOne() async throws {
+        let batches = LockedStringArrays()
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/youtube/v3/videos")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+            XCTAssertEqual(query?.first { $0.name == "maxResults" }?.value, "50")
+            let ids = (query?.first { $0.name == "id" }?.value ?? "")
+                .split(separator: ",")
+                .map(String.init)
+            batches.append(ids)
+            let items = ids.map {
+                #"{"id":"\#($0)","snippet":{"title":"Video","channelTitle":"Channel","publishedAt":"2026-08-15T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"7"},"contentDetails":{"duration":"PT1M"}}"#
+            }.joined(separator: ",")
+            let payload = "{\"items\":[\(items)]}"
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = makeClient()
+        let ids = (0..<51).map { String(format: "video%06d", $0) }
+
+        let statistics = try await client.refreshStatistics(videoIDs: ids)
+
+        XCTAssertEqual(batches.value.map(\.count), [50, 1])
+        XCTAssertEqual(batches.value.flatMap { $0 }, ids)
+        XCTAssertEqual(statistics.count, 51)
+        XCTAssertTrue(statistics.values.allSatisfy { $0 == 7 })
+    }
+
     private func makeClient(token: String? = "test-token") -> YouTubeDataClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
@@ -671,6 +763,25 @@ private final class LockedCounter: @unchecked Sendable {
 
     var value: Int { lock.withLock { storage } }
     func increment() { lock.withLock { storage += 1 } }
+}
+
+private final class LockedDate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Date
+
+    init(_ value: Date) { storage = value }
+    var value: Date { lock.withLock { storage } }
+    func advance(by interval: TimeInterval) {
+        lock.withLock { storage = storage.addingTimeInterval(interval) }
+    }
+}
+
+private final class LockedStringArrays: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [[String]] = []
+
+    var value: [[String]] { lock.withLock { storage } }
+    func append(_ value: [String]) { lock.withLock { storage.append(value) } }
 }
 
 private final class LockedConcurrencyTracker: @unchecked Sendable {

@@ -22,6 +22,7 @@ final class AudioPlayerService: AudioPlaying {
     private var pendingSkipTask: Task<Void, Never>?
     private var protectedSeekTarget: TimeInterval?
     private var protectedSeekDeadline = Date.distantPast
+    private var preservedPositionAfterQueueEnd: TimeInterval?
     private let persistPlaybackPosition: @MainActor (String, TimeInterval) -> Void
     private let markPlaybackStarted: @MainActor (String) -> Void
 
@@ -89,11 +90,13 @@ final class AudioPlayerService: AudioPlaying {
     }
 
     func seek(to seconds: TimeInterval) {
+        preservedPositionAfterQueueEnd = nil
         pendingSkipTask?.cancel()
         applySeekRequest(to: seconds)
     }
 
     func skip(by seconds: TimeInterval) {
+        preservedPositionAfterQueueEnd = nil
         // Update the visible position for every tap, but coalesce a burst of
         // skip commands into one AVPlayer seek. Issuing many exact seeks at
         // once can leave AVPlayer waiting on superseded requests.
@@ -137,11 +140,23 @@ final class AudioPlayerService: AudioPlaying {
             index += 1
             load(queue[index], autoplay: true)
         } else {
+            // Preserve the final visible position before rewinding AVPlayer.
+            // The zero seek is only an idle UI state, not new playback history.
+            persistCurrentPosition(force: true)
+            if preservedPositionAfterQueueEnd == nil {
+                preservedPositionAfterQueueEnd = currentTime
+            }
+            activationRequestID += 1
+            seekRequestID += 1
+            pendingSkipTask?.cancel()
+            pendingSkipTask = nil
+            protectedSeekTarget = 0
+            protectedSeekDeadline = Date().addingTimeInterval(2)
             player.pause()
             player.seek(to: .zero)
             isPlaying = false
             currentTime = 0
-            persistCurrentPosition(force: true)
+            updateNowPlaying(elapsedOnly: false)
         }
     }
 
@@ -154,6 +169,7 @@ final class AudioPlayerService: AudioPlaying {
 
     private func load(_ item: PlaybackItem, autoplay: Bool) {
         persistCurrentPosition(force: true)
+        preservedPositionAfterQueueEnd = nil
         currentItem = item
         markPlaybackStarted(item.id)
         duration = max(0, item.duration)
@@ -188,6 +204,7 @@ final class AudioPlayerService: AudioPlaying {
                     self.updateNowPlaying(elapsedOnly: false)
                     return
                 }
+                self.preservedPositionAfterQueueEnd = nil
                 self.player.play()
                 self.isPlaying = true
                 self.updateNowPlaying(elapsedOnly: false)
@@ -199,6 +216,7 @@ final class AudioPlayerService: AudioPlaying {
     /// to the beginning in `togglePlayback()`.
     func handlePlaybackCompletion() {
         guard currentItem != nil else { return }
+        preservedPositionAfterQueueEnd = nil
         activationRequestID += 1
         pendingSkipTask?.cancel()
         pendingSkipTask = nil
@@ -232,6 +250,7 @@ final class AudioPlayerService: AudioPlaying {
             self.endObserver = nil
         }
         currentItem = nil
+        preservedPositionAfterQueueEnd = nil
         isPlaying = false
         currentTime = 0
         duration = 0
@@ -280,9 +299,10 @@ final class AudioPlayerService: AudioPlaying {
 
     private func persistCurrentPosition(force: Bool = false) {
         guard let item = currentItem else { return }
-        guard force || abs(currentTime - lastPersistedTime) >= 5 else { return }
-        lastPersistedTime = currentTime
-        persistPlaybackPosition(item.id, currentTime)
+        let position = preservedPositionAfterQueueEnd ?? currentTime
+        guard force || abs(position - lastPersistedTime) >= 5 else { return }
+        lastPersistedTime = position
+        persistPlaybackPosition(item.id, position)
     }
 
     private func installRemoteCommands() {

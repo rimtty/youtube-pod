@@ -99,6 +99,32 @@ final class AudioPlayerServiceTests: XCTestCase {
         XCTAssertEqual(playedIDs, [first.id, second.id])
     }
 
+    func testNextAtQueueEndPreservesLastPlaybackPosition() {
+        var persisted: [(String, TimeInterval)] = []
+        let player = AudioPlayerService(persistPlaybackPosition: { videoID, position in
+            persisted.append((videoID, position))
+        })
+        let playbackItem = item(id: "playerend01", duration: 120, resumePosition: 12)
+        player.play(playbackItem, queue: [playbackItem])
+        player.seek(to: 42)
+        persisted.removeAll()
+
+        player.next()
+        player.next()
+        player.persistPosition()
+
+        XCTAssertEqual(player.currentItem?.id, playbackItem.id)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(player.currentTime, 0)
+        XCTAssertEqual(persisted.map(\.0), [playbackItem.id, playbackItem.id, playbackItem.id])
+        XCTAssertEqual(persisted.map(\.1), [42, 42, 42])
+        XCTAssertFalse(persisted.contains { $0.1 == 0 })
+
+        player.seek(to: 10)
+        player.persistPosition()
+        XCTAssertEqual(persisted.suffix(2).map(\.1), [10, 10])
+    }
+
     func testRemovingCurrentItemStopsPlaybackAndClearsNowPlaying() {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         let player = AudioPlayerService()

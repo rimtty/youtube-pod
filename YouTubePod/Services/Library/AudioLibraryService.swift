@@ -178,7 +178,7 @@ final class AudioLibraryService: AudioLibraryManaging {
             let files = (try? FileManager.default.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
+                options: []
             )) ?? []
             for file in files where !retainedPaths.contains(file.standardizedFileURL.path) {
                 try? FileManager.default.removeItem(at: file)
