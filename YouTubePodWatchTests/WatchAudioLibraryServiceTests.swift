@@ -84,6 +84,23 @@ final class WatchAudioLibraryServiceTests: XCTestCase {
         XCTAssertTrue(inventory.entries.isEmpty)
     }
 
+    func testValidatorCancellationDoesNotCreateFailureAcknowledgement() async throws {
+        let fixture = try makeFixture(validator: CancelledAudioValidator())
+        let staged = try makeStaged(
+            videoID: "cancelled01",
+            transferID: UUID(),
+            revision: 1,
+            kind: .audio
+        )
+
+        let result = await fixture.service.importStagedFile(staged)
+
+        XCTAssertEqual(result, .cancelled)
+        XCTAssertTrue(fetch(WatchSavedAudio.self, fixture.context).isEmpty)
+        XCTAssertTrue(try fixture.service.pendingAcknowledgements().isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staged.fileURL.path))
+    }
+
     func testPlaybackPositionPersistsAndClampsWithoutClearingPlayedState() async throws {
         let fixture = try makeFixture()
         let staged = try makeStaged(
@@ -970,6 +987,15 @@ private struct PassthroughAudioValidator: WatchAudioValidating {
     ) async throws -> ValidatedWatchAudio {
         let size = Int64(try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
         return ValidatedWatchAudio(actualFileSize: size, actualDuration: envelope.duration)
+    }
+}
+
+private struct CancelledAudioValidator: WatchAudioValidating {
+    func validate(
+        fileURL: URL,
+        envelope: WatchTransferEnvelope
+    ) async throws -> ValidatedWatchAudio {
+        throw CancellationError()
     }
 }
 

@@ -10,7 +10,9 @@ import Foundation
 /// responsible for synchronously preserving incoming files.
 @MainActor
 protocol WatchWCSessionDriving: AnyObject {
+    var isSupported: Bool { get }
     var isActivated: Bool { get }
+    var hasContentPending: Bool { get }
 
     func installDelegate(_ delegate: (any WCSessionDelegate)?)
     func activate()
@@ -26,8 +28,16 @@ final class AppleWatchWCSessionDriver: WatchWCSessionDriving {
         self.session = session
     }
 
+    var isSupported: Bool {
+        session != nil
+    }
+
     var isActivated: Bool {
         session?.activationState == .activated
+    }
+
+    var hasContentPending: Bool {
+        session?.hasContentPending ?? false
     }
 
     func installDelegate(_ delegate: (any WCSessionDelegate)?) {

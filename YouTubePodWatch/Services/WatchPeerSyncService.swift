@@ -6,16 +6,40 @@ protocol WatchPeerSyncing: AnyObject {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)? { get set }
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)? { get set }
     var activationHandler: (@MainActor @Sendable () -> Void)? { get set }
+    var hasContentPending: Bool { get }
 
     func activate()
+    func waitForActivation() async throws
+    func waitUntilContentDrained() async throws
     func enqueueAcknowledgement(_ acknowledgement: WatchTransferAcknowledgement) throws
     func publishInventory(_ inventory: WatchInventorySnapshot) throws
 }
+
+struct WatchConnectivityWaitPolicy: Equatable, Sendable {
+    let pollInterval: Duration
+    let activationCheckLimit: Int
+    let contentCheckLimit: Int
+    let requiredConsecutiveEmptyChecks: Int
+
+    static let background = WatchConnectivityWaitPolicy(
+        pollInterval: .milliseconds(25),
+        activationCheckLimit: 40,
+        contentCheckLimit: 80,
+        requiredConsecutiveEmptyChecks: 2
+    )
+}
+
+typealias WatchConnectivityDelay =
+    @MainActor @Sendable (Duration) async throws -> Void
 
 @MainActor
 final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
     nonisolated private let stager: WatchIncomingFileStager
     private let driver: any WatchWCSessionDriving
+    private let waitPolicy: WatchConnectivityWaitPolicy
+    private let delay: WatchConnectivityDelay
+    private var lastActivationFailure: WatchPeerSyncError?
+    private var activationRequestIsPending = false
 
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
@@ -23,16 +47,82 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
 
     init(
         stager: WatchIncomingFileStager,
-        driver: (any WatchWCSessionDriving)? = nil
+        driver: (any WatchWCSessionDriving)? = nil,
+        waitPolicy: WatchConnectivityWaitPolicy = .background,
+        delay: @escaping WatchConnectivityDelay = { duration in
+            try await ContinuousClock().sleep(for: duration)
+        }
     ) {
         self.stager = stager
         self.driver = driver ?? AppleWatchWCSessionDriver()
+        self.waitPolicy = waitPolicy
+        self.delay = delay
         super.init()
     }
 
+    var hasContentPending: Bool {
+        driver.hasContentPending
+    }
+
     func activate() {
+        lastActivationFailure = nil
+        activationRequestIsPending = true
         driver.installDelegate(self)
         driver.activate()
+    }
+
+    func waitForActivation() async throws {
+        guard driver.isSupported else {
+            throw WatchPeerSyncError.unsupported
+        }
+        if driver.isActivated {
+            activationRequestIsPending = false
+            lastActivationFailure = nil
+            return
+        }
+        // `WatchSessionReceiver.start()` is idempotent. A later background
+        // wake can arrive after WCSession has become inactive or after an old
+        // activation attempt failed. Start a fresh attempt in either case,
+        // while avoiding a duplicate activate call for the attempt start()
+        // already placed in flight for this wake.
+        if !activationRequestIsPending {
+            activate()
+        }
+        defer {
+            if !driver.isActivated {
+                activationRequestIsPending = false
+            }
+        }
+        let checkLimit = max(1, waitPolicy.activationCheckLimit)
+        for index in 0..<checkLimit {
+            try Task.checkCancellation()
+            if driver.isActivated { return }
+            if let lastActivationFailure { throw lastActivationFailure }
+            if index + 1 < checkLimit {
+                try await delay(waitPolicy.pollInterval)
+            }
+        }
+        throw WatchPeerSyncError.activationTimedOut
+    }
+
+    func waitUntilContentDrained() async throws {
+        let checkLimit = max(1, waitPolicy.contentCheckLimit)
+        let requiredEmptyChecks = max(1, waitPolicy.requiredConsecutiveEmptyChecks)
+        var consecutiveEmptyChecks = 0
+
+        for index in 0..<checkLimit {
+            try Task.checkCancellation()
+            if driver.hasContentPending {
+                consecutiveEmptyChecks = 0
+            } else {
+                consecutiveEmptyChecks += 1
+                if consecutiveEmptyChecks >= requiredEmptyChecks { return }
+            }
+            if index + 1 < checkLimit {
+                try await delay(waitPolicy.pollInterval)
+            }
+        }
+        throw WatchPeerSyncError.contentDrainTimedOut
     }
 
     func enqueueAcknowledgement(_ acknowledgement: WatchTransferAcknowledgement) throws {
@@ -144,10 +234,37 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
         activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
-        guard activationState == .activated, error == nil else { return }
+        let failure = Self.activationFailure(
+            activationState: activationState,
+            error: error
+        )
         Task { @MainActor [weak self] in
-            self?.activationHandler?()
+            guard let self else { return }
+            self.activationRequestIsPending = false
+            self.lastActivationFailure = failure
+            guard failure == nil else { return }
+            self.activationHandler?()
         }
+    }
+
+    nonisolated private static func activationFailure(
+        activationState: WCSessionActivationState,
+        error: (any Error)?
+    ) -> WatchPeerSyncError? {
+        if let error {
+            let nsError = error as NSError
+            return .activationFailed(
+                code: "\(nsError.domain).\(nsError.code)",
+                message: error.localizedDescription
+            )
+        }
+        guard activationState == .activated else {
+            return .activationFailed(
+                code: "activation-state.\(activationState.rawValue)",
+                message: "iPhoneとの同期セッションを開始できませんでした。"
+            )
+        }
+        return nil
     }
 
     nonisolated static func stagingFailureUserInfo(
@@ -169,8 +286,23 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
 
 enum WatchPeerSyncError: LocalizedError, Equatable, Sendable {
     case sessionUnavailable
+    case unsupported
+    case activationFailed(code: String, message: String)
+    case activationTimedOut
+    case contentDrainTimedOut
 
     var errorDescription: String? {
-        "iPhoneとの同期セッションを利用できません。"
+        switch self {
+        case .sessionUnavailable:
+            "iPhoneとの同期セッションを利用できません。"
+        case .unsupported:
+            "このApple WatchではiPhoneとの同期を利用できません。"
+        case .activationFailed(_, let message):
+            message
+        case .activationTimedOut:
+            "iPhoneとの同期セッションの開始を待機できませんでした。"
+        case .contentDrainTimedOut:
+            "iPhoneからの受信完了を待機できませんでした。"
+        }
     }
 }

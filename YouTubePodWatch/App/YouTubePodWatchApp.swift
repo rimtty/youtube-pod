@@ -67,5 +67,8 @@ struct YouTubePodWatchApp: App {
                 }
         }
         .modelContainer(container)
+        .backgroundTask(.watchConnectivity) { [receiver] in
+            await receiver.handleConnectivityBackgroundTask()
+        }
     }
 }

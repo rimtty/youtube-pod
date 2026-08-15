@@ -224,7 +224,184 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertTrue(try fixture.service.pendingAcknowledgements().isEmpty)
     }
 
+    func testBackgroundTaskWaitsForContentDrainBeforeReturning() async throws {
+        let gate = ReceiverAsyncGate()
+        let fixture = try makeFixture()
+        fixture.peer.waitUntilContentDrainedHandler = {
+            await gate.waitOnce()
+        }
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver010",
+            transferID: UUID(),
+            revision: 1
+        )
+        var hasReturned = false
+
+        let task = Task { @MainActor in
+            await fixture.receiver.handleConnectivityBackgroundTask()
+            hasReturned = true
+        }
+        await waitUntil { gate.hasWaiter }
+
+        XCTAssertFalse(hasReturned)
+        gate.open()
+        await task.value
+
+        XCTAssertTrue(hasReturned)
+        XCTAssertEqual(fixture.peer.activationWaitCount, 1)
+        XCTAssertEqual(fixture.peer.contentDrainWaitCount, 2)
+        XCTAssertEqual(fetch(WatchSavedAudio.self, fixture.context).count, 1)
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+    }
+
+    func testSecondDrainImportsReceiptBeforeCallbackNotificationRuns() async throws {
+        let fixture = try makeFixture()
+        fixture.peer.waitUntilContentDrainedHandler = {
+            guard fixture.peer.contentDrainWaitCount == 2 else { return }
+            _ = try self.stageAudio(
+                with: fixture.stager,
+                videoID: "receiver016",
+                transferID: UUID(),
+                revision: 1
+            )
+        }
+
+        await fixture.receiver.handleConnectivityBackgroundTask()
+
+        XCTAssertEqual(
+            fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID),
+            ["receiver016"]
+        )
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+        XCTAssertEqual(fixture.peer.contentDrainWaitCount, 2)
+    }
+
+    func testReceiptArrivingDuringImportRunsInSharedSecondPass() async throws {
+        let validator = SuspendingReceiverAudioValidator()
+        let fixture = try makeFixture(validator: validator)
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver011",
+            transferID: UUID(),
+            revision: 1
+        )
+
+        fixture.receiver.start()
+        await validator.waitUntilFirstValidationStarts()
+
+        let second = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver012",
+            transferID: UUID(),
+            revision: 1
+        )
+        fixture.peer.emitStagedFile(second)
+        await validator.releaseFirstValidation()
+        await fixture.receiver.waitUntilSynchronizationIdle()
+
+        XCTAssertEqual(
+            Set(fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID)),
+            Set(["receiver011", "receiver012"])
+        )
+        let validationCount = await validator.validationCount
+        XCTAssertEqual(validationCount, 2)
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+    }
+
+    func testConcurrentSynchronizationCallersCoalesceIntoOneOperation() async throws {
+        let validator = SuspendingReceiverAudioValidator()
+        let fixture = try makeFixture(validator: validator)
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver014",
+            transferID: UUID(),
+            revision: 1
+        )
+
+        let first = Task { @MainActor in
+            await fixture.receiver.synchronizeNow()
+        }
+        await validator.waitUntilFirstValidationStarts()
+        let second = Task { @MainActor in
+            await fixture.receiver.synchronizeNow()
+        }
+        await Task.yield()
+        await validator.releaseFirstValidation()
+        await first.value
+        await second.value
+
+        let validationCount = await validator.validationCount
+        XCTAssertEqual(validationCount, 1)
+        XCTAssertEqual(
+            fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID),
+            ["receiver014"]
+        )
+        XCTAssertFalse(fixture.receiver.isReceiving)
+    }
+
+    func testCancelledBackgroundDrainKeepsDurableReceiptForNextWake() async throws {
+        let validator = CancellableReceiverAudioValidator()
+        let fixture = try makeFixture(validator: validator)
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver013",
+            transferID: UUID(),
+            revision: 1
+        )
+
+        let task = Task { @MainActor in
+            await fixture.receiver.handleConnectivityBackgroundTask()
+        }
+        await validator.waitUntilValidationStarts()
+        task.cancel()
+        await task.value
+        await fixture.receiver.waitUntilSynchronizationIdle()
+
+        let hasReceipt = try fixture.stager.listStagedFiles()
+            .contains { $0.envelope.youtubeID == "receiver013" }
+        XCTAssertTrue(hasReceipt)
+        XCTAssertTrue(try fixture.service.pendingAcknowledgements().isEmpty)
+        XCTAssertFalse(fixture.receiver.isReceiving)
+
+        await fixture.receiver.handleConnectivityBackgroundTask()
+
+        XCTAssertEqual(
+            fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID),
+            ["receiver013"]
+        )
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+        XCTAssertEqual(fixture.peer.acknowledgements.last?.outcome, .imported)
+    }
+
+    func testActivationFailureCancelsSynchronizationAndKeepsDurableReceipt() async throws {
+        let validator = CancellableReceiverAudioValidator()
+        let fixture = try makeFixture(validator: validator)
+        fixture.peer.waitForActivationHandler = {
+            await validator.waitUntilValidationStarts()
+            throw WatchPeerSyncError.activationTimedOut
+        }
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver015",
+            transferID: UUID(),
+            revision: 1
+        )
+
+        await fixture.receiver.handleConnectivityBackgroundTask()
+
+        let hasReceipt = try fixture.stager.listStagedFiles()
+            .contains { $0.envelope.youtubeID == "receiver015" }
+        XCTAssertTrue(hasReceipt)
+        XCTAssertFalse(fixture.receiver.isReceiving)
+        XCTAssertEqual(
+            fixture.receiver.lastErrorMessage,
+            WatchPeerSyncError.activationTimedOut.localizedDescription
+        )
+    }
+
     private func makeFixture(
+        validator: any WatchAudioValidating = ReceiverAudioValidator(),
         capacityChecker: any WatchCapacityChecking = ReceiverCapacityChecker(),
         invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in }
     ) throws -> ReceiverFixture {
@@ -240,7 +417,7 @@ final class WatchSessionReceiverTests: XCTestCase {
         let stager = WatchIncomingFileStager(rootDirectoryURL: inboxURL)
         let service = WatchAudioLibraryService(
             modelContext: container.mainContext,
-            validator: ReceiverAudioValidator(),
+            validator: validator,
             capacityChecker: capacityChecker,
             rootURL: libraryURL,
             minimumCapacityReserve: 0
@@ -349,6 +526,75 @@ private struct ReceiverAudioValidator: WatchAudioValidating {
     }
 }
 
+private actor SuspendingReceiverAudioValidator: WatchAudioValidating {
+    private var firstValidationStarted = false
+    private var firstValidationStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstValidationRelease: CheckedContinuation<Void, Never>?
+    private(set) var validationCount = 0
+
+    func validate(
+        fileURL: URL,
+        envelope: WatchTransferEnvelope
+    ) async throws -> ValidatedWatchAudio {
+        validationCount += 1
+        if validationCount == 1 {
+            firstValidationStarted = true
+            firstValidationStartWaiters.forEach { $0.resume() }
+            firstValidationStartWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                firstValidationRelease = continuation
+            }
+        }
+        let size = Int64(try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        return ValidatedWatchAudio(
+            actualFileSize: size,
+            actualDuration: envelope.duration
+        )
+    }
+
+    func waitUntilFirstValidationStarts() async {
+        if firstValidationStarted { return }
+        await withCheckedContinuation { continuation in
+            firstValidationStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseFirstValidation() {
+        firstValidationRelease?.resume()
+        firstValidationRelease = nil
+    }
+}
+
+private actor CancellableReceiverAudioValidator: WatchAudioValidating {
+    private var validationStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var validationCount = 0
+
+    func validate(
+        fileURL: URL,
+        envelope: WatchTransferEnvelope
+    ) async throws -> ValidatedWatchAudio {
+        validationCount += 1
+        validationStarted = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        if validationCount == 1 {
+            try await Task.sleep(for: .seconds(3_600))
+        }
+        return ValidatedWatchAudio(
+            actualFileSize: envelope.fileSize,
+            actualDuration: envelope.duration
+        )
+    }
+
+    func waitUntilValidationStarts() async {
+        if validationStarted { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+}
+
 private struct ReceiverCapacityChecker: WatchCapacityChecking {
     func ensureImportCapacity(
         at libraryURL: URL,
@@ -379,14 +625,33 @@ private final class ReceiverPeerStub: WatchPeerSyncing {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
+    var hasContentPending = false
 
     var shouldFailAcknowledgements = false
+    var waitForActivationError: (any Error)?
+    var waitForActivationHandler: (@MainActor () async throws -> Void)?
+    var waitUntilContentDrainedError: (any Error)?
+    var waitUntilContentDrainedHandler: (@MainActor () async throws -> Void)?
     private(set) var activationCount = 0
+    private(set) var activationWaitCount = 0
+    private(set) var contentDrainWaitCount = 0
     private(set) var acknowledgements: [WatchTransferAcknowledgement] = []
     private(set) var inventories: [WatchInventorySnapshot] = []
 
     func activate() {
         activationCount += 1
+    }
+
+    func waitForActivation() async throws {
+        activationWaitCount += 1
+        try await waitForActivationHandler?()
+        if let waitForActivationError { throw waitForActivationError }
+    }
+
+    func waitUntilContentDrained() async throws {
+        contentDrainWaitCount += 1
+        if let waitUntilContentDrainedError { throw waitUntilContentDrainedError }
+        try await waitUntilContentDrainedHandler?()
     }
 
     func enqueueAcknowledgement(_ acknowledgement: WatchTransferAcknowledgement) throws {
@@ -406,5 +671,30 @@ private final class ReceiverPeerStub: WatchPeerSyncing {
 
     func emitCommand(_ command: StagedWatchLibraryCommand) {
         commandHandler?(command)
+    }
+
+    func emitStagedFile(_ file: StagedWatchTransferFile) {
+        stagedFileHandler?(file)
+    }
+}
+
+@MainActor
+private final class ReceiverAsyncGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var hasWaiter = false
+    private var hasOpened = false
+
+    func waitOnce() async {
+        guard !hasOpened else { return }
+        hasWaiter = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func open() {
+        hasOpened = true
+        continuation?.resume()
+        continuation = nil
     }
 }

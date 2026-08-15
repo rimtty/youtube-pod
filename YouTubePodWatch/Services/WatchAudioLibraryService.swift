@@ -17,6 +17,7 @@ enum WatchLibraryImportResult: Equatable, Sendable {
     case deleted
     case rejected(WatchTransferAcknowledgementErrorCode)
     case persistenceFailed
+    case cancelled
 }
 
 enum WatchAudioImportCheckpoint: Equatable, Sendable {
@@ -88,6 +89,9 @@ final class WatchAudioLibraryService {
             case .artwork:
                 return await importArtwork(staged)
             }
+        } catch is CancellationError {
+            modelContext.rollback()
+            return .cancelled
         } catch {
             return reject(
                 staged,
@@ -420,6 +424,12 @@ final class WatchAudioLibraryService {
             if oldAudioURL != finalAudioURL { removeFileIfPresent(oldAudioURL) }
             if oldArtworkURL != finalArtworkURL { removeFileIfPresent(oldArtworkURL) }
             return .imported
+        } catch is CancellationError {
+            rollbackAudioImport(
+                ownedFinalAudioURL: ownedFinalAudioURL,
+                ownedFinalArtworkURL: ownedFinalArtworkURL
+            )
+            return .cancelled
         } catch {
             rollbackAudioImport(
                 ownedFinalAudioURL: ownedFinalAudioURL,
@@ -478,6 +488,9 @@ final class WatchAudioLibraryService {
                 throw error
             }
             return .artworkPending
+        } catch is CancellationError {
+            modelContext.rollback()
+            return .cancelled
         } catch {
             return reject(staged, code: errorCode(for: error), message: error.localizedDescription)
         }

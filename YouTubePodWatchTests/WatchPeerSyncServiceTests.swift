@@ -57,9 +57,174 @@ struct WatchPeerSyncServiceTests {
         driver.activate()
         driver.transferUserInfo([:])
 
+        #expect(driver.isSupported == false)
         #expect(driver.isActivated == false)
+        #expect(driver.hasContentPending == false)
         #expect(throws: WatchPeerSyncError.sessionUnavailable) {
             try driver.updateApplicationContext([:])
+        }
+    }
+
+    @Test @MainActor
+    func activationWaiterReturnsImmediatelyForActivatedDriver() async throws {
+        let fixture = try makeFixture(isActivated: true)
+        fixture.service.activate()
+
+        try await fixture.service.waitForActivation()
+
+        #expect(fixture.driver.delayCallCount == 0)
+    }
+
+    @Test @MainActor
+    func activationWaiterReactivatesAfterActivatedSessionBecomesInactive() async throws {
+        let fixture = try makeFixture(isActivated: true)
+        fixture.service.activate()
+        try await fixture.service.waitForActivation()
+
+        fixture.driver.isActivated = false
+        fixture.driver.activateOnDelayCall = 1
+        try await fixture.service.waitForActivation()
+
+        #expect(fixture.driver.activationCount == 2)
+        #expect(fixture.driver.isActivated)
+    }
+
+    @Test @MainActor
+    func activationWaiterRejectsUnsupportedDriverWithoutPolling() async throws {
+        let fixture = try makeFixture(isSupported: false)
+        fixture.service.activate()
+
+        do {
+            try await fixture.service.waitForActivation()
+            Issue.record("Expected unsupported Watch Connectivity")
+        } catch {
+            #expect(error as? WatchPeerSyncError == .unsupported)
+        }
+        #expect(fixture.driver.delayCallCount == 0)
+    }
+
+    @Test @MainActor
+    func activationWaiterObservesDriverAfterDeterministicDelay() async throws {
+        let fixture = try makeFixture()
+        fixture.driver.activateOnDelayCall = 2
+        fixture.service.activate()
+
+        try await fixture.service.waitForActivation()
+
+        #expect(fixture.driver.delayCallCount == 2)
+    }
+
+    @Test @MainActor
+    func activationWaiterPropagatesDelegateFailure() async throws {
+        let fixture = try makeFixture(waitPolicy: .init(
+            pollInterval: .zero,
+            activationCheckLimit: 100,
+            contentCheckLimit: 3,
+            requiredConsecutiveEmptyChecks: 2
+        ))
+        fixture.service.activate()
+        let waiter = Task { @MainActor in
+            try await fixture.service.waitForActivation()
+        }
+        while fixture.driver.delayCallCount == 0 {
+            await Task.yield()
+        }
+        fixture.service.handleActivationCompletion(
+            activationState: .activated,
+            error: TestDriverError.forced
+        )
+
+        do {
+            try await waiter.value
+            Issue.record("Expected activation failure")
+        } catch let error as WatchPeerSyncError {
+            guard case .activationFailed(let code, let message) = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+            #expect(code.contains("TestDriverError"))
+            #expect(!message.isEmpty)
+        }
+    }
+
+    @Test @MainActor
+    func activationWaiterRetriesAfterPreviousAttemptFailed() async throws {
+        let fixture = try makeFixture()
+        fixture.service.activate()
+        fixture.service.handleActivationCompletion(
+            activationState: .inactive,
+            error: TestDriverError.forced
+        )
+        await Task.yield()
+        fixture.driver.activateOnDelayCall = fixture.driver.delayCallCount + 1
+
+        try await fixture.service.waitForActivation()
+
+        #expect(fixture.driver.activationCount == 2)
+        #expect(fixture.driver.isActivated)
+    }
+
+    @Test @MainActor
+    func activationWaiterTimesOutAtConfiguredBound() async throws {
+        let fixture = try makeFixture(waitPolicy: .init(
+            pollInterval: .zero,
+            activationCheckLimit: 3,
+            contentCheckLimit: 3,
+            requiredConsecutiveEmptyChecks: 2
+        ))
+        fixture.service.activate()
+
+        do {
+            try await fixture.service.waitForActivation()
+            Issue.record("Expected activation timeout")
+        } catch {
+            #expect(error as? WatchPeerSyncError == .activationTimedOut)
+        }
+        #expect(fixture.driver.delayCallCount == 2)
+    }
+
+    @Test @MainActor
+    func contentDrainRequiresTwoConsecutiveEmptyChecks() async throws {
+        let fixture = try makeFixture(hasContentPending: false)
+        fixture.driver.pendingValuesAfterDelay = [true, false, false]
+
+        try await fixture.service.waitUntilContentDrained()
+
+        #expect(fixture.driver.delayCallCount == 3)
+        #expect(fixture.service.hasContentPending == false)
+    }
+
+    @Test @MainActor
+    func contentDrainTimesOutWhileContentRemainsPending() async throws {
+        let fixture = try makeFixture(
+            hasContentPending: true,
+            waitPolicy: .init(
+                pollInterval: .zero,
+                activationCheckLimit: 2,
+                contentCheckLimit: 4,
+                requiredConsecutiveEmptyChecks: 2
+            )
+        )
+
+        do {
+            try await fixture.service.waitUntilContentDrained()
+            Issue.record("Expected content drain timeout")
+        } catch {
+            #expect(error as? WatchPeerSyncError == .contentDrainTimedOut)
+        }
+        #expect(fixture.driver.delayCallCount == 3)
+    }
+
+    @Test @MainActor
+    func contentDrainPropagatesCancellation() async throws {
+        let fixture = try makeFixture(hasContentPending: true)
+        fixture.driver.delayError = CancellationError()
+
+        do {
+            try await fixture.service.waitUntilContentDrained()
+            Issue.record("Expected cancellation")
+        } catch {
+            #expect(error is CancellationError)
         }
     }
 
@@ -301,8 +466,16 @@ struct WatchPeerSyncServiceTests {
 
     @MainActor
     private func makeFixture(
+        isSupported: Bool = true,
         isActivated: Bool = false,
-        blockStagingRoot: Bool = false
+        hasContentPending: Bool = false,
+        blockStagingRoot: Bool = false,
+        waitPolicy: WatchConnectivityWaitPolicy = .init(
+            pollInterval: .zero,
+            activationCheckLimit: 5,
+            contentCheckLimit: 8,
+            requiredConsecutiveEmptyChecks: 2
+        )
     ) throws -> PeerFixture {
         let rootURL = FileManager.default.temporaryDirectory.appending(
             path: "WatchPeerSyncServiceTests-\(UUID().uuidString)",
@@ -317,8 +490,20 @@ struct WatchPeerSyncServiceTests {
             try Data("not-a-directory".utf8).write(to: inboxURL)
         }
         let stager = WatchIncomingFileStager(rootDirectoryURL: inboxURL)
-        let driver = WatchWCSessionDriverStub(isActivated: isActivated)
-        let service = WatchWCSessionPeerSyncService(stager: stager, driver: driver)
+        let driver = WatchWCSessionDriverStub(
+            isSupported: isSupported,
+            isActivated: isActivated,
+            hasContentPending: hasContentPending
+        )
+        let service = WatchWCSessionPeerSyncService(
+            stager: stager,
+            driver: driver,
+            waitPolicy: waitPolicy,
+            delay: { _ in
+                try driver.advanceDelay()
+                await Task.yield()
+            }
+        )
         return PeerFixture(
             rootURL: rootURL,
             stager: stager,
@@ -373,15 +558,38 @@ private final class PeerFixture {
 
 @MainActor
 private final class WatchWCSessionDriverStub: WatchWCSessionDriving {
+    var isSupported: Bool
     var isActivated: Bool
+    var hasContentPending: Bool
     private(set) weak var installedDelegate: (any WCSessionDelegate)?
     private(set) var activationCount = 0
+    private(set) var delayCallCount = 0
     private(set) var userInfos: [[String: Any]] = []
     private(set) var applicationContexts: [[String: Any]] = []
     var applicationContextError: TestDriverError?
+    var activateOnDelayCall: Int?
+    var pendingValuesAfterDelay: [Bool] = []
+    var delayError: (any Error)?
 
-    init(isActivated: Bool) {
+    init(
+        isSupported: Bool,
+        isActivated: Bool,
+        hasContentPending: Bool
+    ) {
+        self.isSupported = isSupported
         self.isActivated = isActivated
+        self.hasContentPending = hasContentPending
+    }
+
+    func advanceDelay() throws {
+        delayCallCount += 1
+        if activateOnDelayCall == delayCallCount {
+            isActivated = true
+        }
+        if !pendingValuesAfterDelay.isEmpty {
+            hasContentPending = pendingValuesAfterDelay.removeFirst()
+        }
+        if let delayError { throw delayError }
     }
 
     func installDelegate(_ delegate: (any WCSessionDelegate)?) {
