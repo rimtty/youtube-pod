@@ -19,6 +19,11 @@ enum WatchLibraryImportResult: Equatable, Sendable {
     case persistenceFailed
 }
 
+enum WatchAudioImportCheckpoint: Equatable, Sendable {
+    case afterFinalAudioCopy
+    case beforeCommit
+}
+
 @MainActor
 final class WatchAudioLibraryService {
     private static let metadataKey = "primary"
@@ -34,6 +39,7 @@ final class WatchAudioLibraryService {
     private let minimumCapacityReserve: Int64
     private let pendingArtworkTTL: TimeInterval
     private let saveChanges: @MainActor (ModelContext) throws -> Void
+    private let audioImportCheckpoint: @MainActor (WatchAudioImportCheckpoint) throws -> Void
 
     init(
         modelContext: ModelContext,
@@ -43,7 +49,8 @@ final class WatchAudioLibraryService {
         fileManager: FileManager = .default,
         minimumCapacityReserve: Int64 = 10 * 1_024 * 1_024,
         pendingArtworkTTL: TimeInterval = 24 * 60 * 60,
-        saveChanges: (@MainActor (ModelContext) throws -> Void)? = nil
+        saveChanges: (@MainActor (ModelContext) throws -> Void)? = nil,
+        audioImportCheckpoint: (@MainActor (WatchAudioImportCheckpoint) throws -> Void)? = nil
     ) {
         self.modelContext = modelContext
         self.validator = validator
@@ -53,6 +60,7 @@ final class WatchAudioLibraryService {
         self.minimumCapacityReserve = minimumCapacityReserve
         self.pendingArtworkTTL = pendingArtworkTTL
         self.saveChanges = saveChanges ?? { try $0.save() }
+        self.audioImportCheckpoint = audioImportCheckpoint ?? { _ in }
     }
 
     func disposition(for envelope: WatchTransferEnvelope) throws -> WatchIncomingRevisionDisposition {
@@ -291,6 +299,8 @@ final class WatchAudioLibraryService {
 
     private func importAudio(_ staged: StagedWatchTransferFile) async -> WatchLibraryImportResult {
         let envelope = staged.envelope
+        var ownedFinalAudioURL: URL?
+        var ownedFinalArtworkURL: URL?
         do {
             switch try disposition(for: envelope) {
             case .exactDuplicate:
@@ -329,7 +339,11 @@ final class WatchAudioLibraryService {
             // The receipt is the crash-recovery journal. Keep its payload
             // intact until the SwiftData transaction commits; on relaunch an
             // orphan final copy is removed and the receipt is imported again.
+            // The destination did not exist above, so this import attempt owns
+            // any complete or partial file left by copyItem.
+            ownedFinalAudioURL = finalAudioURL
             try fileManager.copyItem(at: staged.fileURL, to: finalAudioURL)
+            try audioImportCheckpoint(.afterFinalAudioCopy)
 
             let pendingArtworkURL = pendingArtworkFileURL(transferID: envelope.transferID)
             let pendingSidecarURL = pendingArtworkEnvelopeURL(transferID: envelope.transferID)
@@ -341,6 +355,7 @@ final class WatchAudioLibraryService {
                 do {
                     try fileManager.copyItem(at: pendingArtworkURL, to: finalArtworkURL)
                     installedArtwork = true
+                    ownedFinalArtworkURL = finalArtworkURL
                 } catch {
                     // Artwork is optional. A damaged or unwritable image must
                     // never roll back a fully validated audio import.
@@ -389,10 +404,13 @@ final class WatchAudioLibraryService {
             }
             try metadata().advanceGeneration()
             try enqueueAcknowledgementIfMissing(for: envelope, outcome: .imported)
+            try audioImportCheckpoint(.beforeCommit)
 
             guard persist() else {
-                removeFileIfPresent(finalAudioURL)
-                if installedArtwork { removeFileIfPresent(finalArtworkURL) }
+                rollbackAudioImport(
+                    ownedFinalAudioURL: ownedFinalAudioURL,
+                    ownedFinalArtworkURL: ownedFinalArtworkURL
+                )
                 return persistFailureAcknowledgement(for: staged)
             }
             if installedArtwork {
@@ -403,6 +421,10 @@ final class WatchAudioLibraryService {
             if oldArtworkURL != finalArtworkURL { removeFileIfPresent(oldArtworkURL) }
             return .imported
         } catch {
+            rollbackAudioImport(
+                ownedFinalAudioURL: ownedFinalAudioURL,
+                ownedFinalArtworkURL: ownedFinalArtworkURL
+            )
             return reject(staged, code: errorCode(for: error), message: error.localizedDescription)
         }
     }
@@ -482,7 +504,17 @@ final class WatchAudioLibraryService {
             return .persistenceFailed
         }
         guard persist() else { return .persistenceFailed }
+        removePendingArtwork(transferID: staged.envelope.transferID)
         return .rejected(code)
+    }
+
+    private func rollbackAudioImport(
+        ownedFinalAudioURL: URL?,
+        ownedFinalArtworkURL: URL?
+    ) {
+        modelContext.rollback()
+        removeFileIfPresent(ownedFinalAudioURL)
+        removeFileIfPresent(ownedFinalArtworkURL)
     }
 
     private func persistFailureAcknowledgement(
