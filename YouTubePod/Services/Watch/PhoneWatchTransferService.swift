@@ -284,11 +284,15 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             }
 
         case .progress(let key, let progress):
-            guard let record = record(transferID: key.transferID),
+            guard key.fileKind == .audio,
+                  let record = record(transferID: key.transferID),
                   !record.senderFailed,
                   record.state != .removedFromWatch else { return }
-            let normalized = min(max(progress, 0), 1)
-            liveProgress[record.youtubeID] = max(liveProgress[record.youtubeID] ?? 0, normalized)
+            let normalized = normalizedProgress(progress)
+            liveProgress[record.youtubeID] = max(
+                liveProgress[record.youtubeID] ?? record.lastKnownProgress,
+                normalized
+            )
             let now = Date.now
             let crossedTenPercentBoundary = Int(normalized * 10) > Int(record.lastKnownProgress * 10)
             let fiveSecondsElapsed = now.timeIntervalSince(lastProgressSaveAt[key.transferID] ?? .distantPast) >= 5
@@ -332,7 +336,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 return
             }
             switch key.fileKind {
-            case .audio: record.audioDeliveryFinished = true
+            case .audio:
+                record.audioDeliveryFinished = true
+                record.lastKnownProgress = 1
+                liveProgress[record.youtubeID] = 1
             case .artwork: record.artworkDeliveryFinished = true
             }
             completeEvent(for: record)
@@ -589,20 +596,40 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 continue
             }
 
+            record.state = .transferring
+            record.senderFailed = false
+            record.updatedAt = .now
             do {
-                record.state = .transferring
-                record.senderFailed = false
-                record.updatedAt = .now
                 try transport.enqueueFile(
                     at: prepared.audioURL,
                     envelope: try envelope(for: record, fileKind: .audio, fileURL: prepared.audioURL)
                 )
-                if let artworkURL = prepared.artworkURL {
+            } catch {
+                transport.cancelFiles(transferID: record.transferID)
+                record.senderFailed = true
+                markFailed(record, code: "enqueue", message: error.localizedDescription)
+                activeTransferID = nil
+                sessionStartedTransferIDs.remove(record.transferID)
+                _ = persistChanges()
+                continue
+            }
+
+            if let artworkURL = prepared.artworkURL {
+                do {
                     try transport.enqueueFile(
                         at: artworkURL,
                         envelope: try envelope(for: record, fileKind: .artwork, fileURL: artworkURL)
                     )
+                } catch {
+                    // Artwork is optional. An audio file that has already been
+                    // accepted by WatchConnectivity must remain transferable.
+                    record.artworkDeliveryFinished = true
+                    record.lastErrorCode = "artwork.enqueue"
+                    record.lastErrorMessage = error.localizedDescription
                 }
+            }
+
+            do {
                 try modelContext.save()
                 sessionStartedTransferIDs.insert(record.transferID)
                 lastPersistenceError = nil
@@ -637,7 +664,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 reduceState(of: record)
                 if record.state == .transferring {
                     activeTransferID = activeTransferID ?? record.transferID
-                    liveProgress[record.youtubeID] = files.map(\.progress).max() ?? 0
+                    updateReconciledAudioProgress(for: record, files: files)
                 }
             case .transferring where files.isEmpty && !sessionStartedTransferIDs.contains(record.transferID):
                 record.state = .reconciliationRequired
@@ -645,8 +672,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 liveProgress[record.youtubeID] = nil
             case .transferring:
                 activeTransferID = activeTransferID ?? record.transferID
-                let progress = files.map(\.progress).max() ?? 0
-                liveProgress[record.youtubeID] = progress
+                updateReconciledAudioProgress(for: record, files: files)
             case .preparing:
                 record.state = .reconciliationRequired
             case .awaitingWatchConfirmation
@@ -706,6 +732,27 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             let transferID = record.transferID
             Task { await snapshots.removeTransfer(transferID) }
         }
+    }
+
+    private func updateReconciledAudioProgress(
+        for record: WatchTransferRecord,
+        files: [OutstandingWatchFile]
+    ) {
+        let progress: Double
+        if record.audioDeliveryFinished {
+            progress = 1
+        } else if let audio = files.first(where: { $0.key.fileKind == .audio }) {
+            progress = max(record.lastKnownProgress, normalizedProgress(audio.progress))
+        } else {
+            progress = record.lastKnownProgress
+        }
+        record.lastKnownProgress = progress
+        liveProgress[record.youtubeID] = progress
+    }
+
+    private func normalizedProgress(_ progress: Double) -> Double {
+        guard progress.isFinite else { return 0 }
+        return min(max(progress, 0), 1)
     }
 
     private func reduceState(of record: WatchTransferRecord) {

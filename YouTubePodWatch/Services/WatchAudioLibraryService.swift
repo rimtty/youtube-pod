@@ -12,6 +12,7 @@ enum WatchLibraryImportResult: Equatable, Sendable {
     case imported
     case artworkAttached
     case artworkPending
+    case artworkDiscarded(WatchTransferAcknowledgementErrorCode)
     case duplicate
     case deleted
     case rejected(WatchTransferAcknowledgementErrorCode)
@@ -341,8 +342,11 @@ final class WatchAudioLibraryService {
                     try fileManager.copyItem(at: pendingArtworkURL, to: finalArtworkURL)
                     installedArtwork = true
                 } catch {
-                    removeFileIfPresent(finalAudioURL)
-                    throw error
+                    // Artwork is optional. A damaged or unwritable image must
+                    // never roll back a fully validated audio import.
+                    removeFileIfPresent(finalArtworkURL)
+                    removeFileIfPresent(pendingArtworkURL)
+                    removeFileIfPresent(pendingSidecarURL)
                 }
             }
 
@@ -462,6 +466,11 @@ final class WatchAudioLibraryService {
         code: WatchTransferAcknowledgementErrorCode,
         message: String
     ) -> WatchLibraryImportResult {
+        guard staged.envelope.fileKind == .audio else {
+            modelContext.rollback()
+            removePendingArtwork(transferID: staged.envelope.transferID)
+            return .artworkDiscarded(code)
+        }
         do {
             try enqueueAcknowledgementIfMissing(
                 for: staged.envelope,
@@ -480,6 +489,10 @@ final class WatchAudioLibraryService {
         for staged: StagedWatchTransferFile
     ) -> WatchLibraryImportResult {
         modelContext.rollback()
+        guard staged.envelope.fileKind == .audio else {
+            removePendingArtwork(transferID: staged.envelope.transferID)
+            return .artworkDiscarded(.persistenceFailure)
+        }
         do {
             try enqueueAcknowledgementIfMissing(
                 for: staged.envelope,
