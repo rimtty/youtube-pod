@@ -1,0 +1,2 @@
+#include? "Secrets.xcconfig"
+PRODUCT_BUNDLE_IDENTIFIER = com.rimtty.YouTubePod.watchkitapp.tests

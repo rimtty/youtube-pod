@@ -34,3 +34,6 @@ jobs:
 
       - name: Run simulator tests
         run: ./scripts/verify.sh
+
+      - name: Run Apple Watch Series 9+ simulator tests
+        run: ./scripts/verify_watch.sh
