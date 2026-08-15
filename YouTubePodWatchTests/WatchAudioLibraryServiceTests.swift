@@ -84,6 +84,34 @@ final class WatchAudioLibraryServiceTests: XCTestCase {
         XCTAssertTrue(inventory.entries.isEmpty)
     }
 
+    func testPlaybackPositionPersistsAndClampsWithoutClearingPlayedState() async throws {
+        let fixture = try makeFixture()
+        let staged = try makeStaged(
+            videoID: "playback001",
+            transferID: UUID(),
+            revision: 1,
+            kind: .audio
+        )
+        let importResult = await fixture.service.importStagedFile(staged)
+        XCTAssertEqual(importResult, .imported)
+
+        try fixture.service.persistPlaybackPosition(
+            videoID: "playback001",
+            position: 999,
+            hasBeenPlayed: true
+        )
+        try fixture.service.persistPlaybackPosition(
+            videoID: "playback001",
+            position: 12,
+            hasBeenPlayed: false
+        )
+
+        let saved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        XCTAssertEqual(saved.lastPlaybackPosition, 12)
+        XCTAssertTrue(saved.hasBeenPlayed)
+        XCTAssertNotNil(fixture.service.audioFileURL(for: saved))
+    }
+
     func testNewerRevisionWinsWhenOlderValidationResumesLate() async throws {
         let validator = BlockingRevisionValidator(blockedRevision: 1)
         let fixture = try makeFixture(validator: validator)

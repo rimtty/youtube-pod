@@ -31,7 +31,7 @@
 - 保存済み音声の削除後にダウンロード完了表示を破棄し、キュー末尾操作でも再生履歴を0秒で上書きしないことを確認
 - 起動時に中断された隠しステージングM4Aも孤児ファイルとして清掃することを確認
 - watchOS 27 / Apple Watch Series 9（45mm）Simulator: Watchアプリのビルド、iPhoneアプリへの埋め込み、起動に成功
-- Watch側回帰テスト: 52件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除を含む）
+- Watch側回帰テスト: 73件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認
 - WCSession callback URLを同期退避し、payload＋sidecar完成後のatomic rename、rename直前終了からの復旧、破損receiptの隔離を確認
 - 音声trackあり／動画trackなし／M4A／宣言サイズをAVFoundationで検証し、容量不足を構造化エラーへ分類
@@ -39,6 +39,10 @@
 - stale revision、同revision別transfer、削除tombstone、音声／画像の到着順、音声前画像の削除を確認
 - ACK outboxの再起動復元、送信失敗後の再試行、不正ACK行の隔離、実ファイル欠落時にinventoryへ掲載しないことを確認
 - 削除commandをdelegate callback内で同期永続化し、再起動後に音声より先に適用して遅延配送による復活を防ぐことを確認
+- Watchのローカルプレイヤーは再生／一時停止、15秒送り／戻し、シーク、前後項目、再生完了、削除時の停止とキュー除外を確認
+- 0.5秒の進捗監視、5秒単位と停止時の再生位置保存、保存失敗後の再試行、連続シーク時の古い通知抑制を確認
+- 音声ファイル欠落、AVPlayerItem失敗、音声セッション中断、出力経路切断、Now Playingとリモート操作の状態遷移を確認
+- Watchライブラリは16:9サムネイル、再生位置、受信中／同期失敗／再試行、再生不可状態、Dynamic Type、VoiceOver、Reduce Transparencyに対応
 - iPhone側Watch転送は、直列キュー、重複抑止、進捗、キャンセル、最大2回の自動再試行、stale ACK拒否、送信完了とWatch ACKの順序入替、再起動時照合をスタブで確認
 - 新しい転送／Watch ACKによる古い自動再試行の無効化、Watch取込確認タイムアウト、タイムアウト後の遅延ACK受理を確認
 - 自動再試行のsnapshot clone中に遅延ACKが届いても、確認済みrevisionを上書きしないことを確認
@@ -59,6 +63,9 @@
 - [ ] Watch再起動後も一覧、サムネイル、再生位置が復元する
 - [ ] iPhoneが機内モードでもWatchのローカル音声を再生できる
 - [ ] Bluetoothヘッドホンで画面消灯後も再生と操作が継続する
+- [ ] 41mm／45mmでライブラリとフルプレイヤーが崩れず、最大Dynamic Type、VoiceOver、Reduce Transparencyで操作できる
+- [ ] Digital Crownでシークしても連続seekや進捗表示のぶれが発生しない
+- [ ] WatchのAppIconがランチャーの円形マスク内で自然に表示される
 - [ ] Watchの容量不足時に既存ライブラリが壊れない
 - [ ] Watchから削除後に音声、画像、SwiftDataがすべて消える
 - [ ] iPhoneの元音声を削除してもWatch側コピーを再生できる

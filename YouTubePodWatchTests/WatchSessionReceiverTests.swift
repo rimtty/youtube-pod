@@ -43,6 +43,24 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
     }
 
+    func testSuccessfulAudioImportInvalidatesStalePlaybackQueueEntry() async throws {
+        var invalidatedVideoIDs: [String] = []
+        let fixture = try makeFixture(
+            invalidatePlaybackItem: { invalidatedVideoIDs.append($0) }
+        )
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver008",
+            transferID: UUID(),
+            revision: 2
+        )
+
+        fixture.receiver.start()
+        await waitUntil { fetch(WatchSavedAudio.self, fixture.context).count == 1 }
+
+        XCTAssertEqual(invalidatedVideoIDs, ["receiver008"])
+    }
+
     func testUnsentAcknowledgementRemainsDurableAndRetriesOnActivation() async throws {
         let fixture = try makeFixture()
         fixture.peer.shouldFailAcknowledgements = true
@@ -96,6 +114,57 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertEqual(fetch(WatchDeletionTombstone.self, fixture.context).first?.revision, 2)
     }
 
+    func testWatchInitiatedDeletionPublishesAcknowledgementAndEmptyInventory() async throws {
+        let fixture = try makeFixture()
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver006",
+            transferID: UUID(),
+            revision: 3
+        )
+        fixture.receiver.start()
+        await waitUntil { fetch(WatchSavedAudio.self, fixture.context).count == 1 }
+        let saved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+
+        let result = await fixture.receiver.deleteFromWatch(saved)
+
+        XCTAssertEqual(result, .deleted)
+        XCTAssertTrue(fetch(WatchSavedAudio.self, fixture.context).isEmpty)
+        XCTAssertEqual(fetch(WatchDeletionTombstone.self, fixture.context).first?.revision, 3)
+        XCTAssertTrue(fixture.peer.acknowledgements.contains {
+            $0.outcome == .deleted
+                && $0.transferID == saved.transferID
+                && $0.revision == saved.revision
+        })
+        XCTAssertTrue(fixture.peer.inventories.last?.entries.isEmpty == true)
+    }
+
+    func testIncomingDeletionStopsPlaybackBeforeRemovingCurrentFile() async throws {
+        var stoppedVideoIDs: [String] = []
+        let fixture = try makeFixture(invalidatePlaybackItem: { stoppedVideoIDs.append($0) })
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver007",
+            transferID: UUID(),
+            revision: 1
+        )
+        fixture.receiver.start()
+        await waitUntil { fetch(WatchSavedAudio.self, fixture.context).count == 1 }
+        stoppedVideoIDs.removeAll()
+        let command = WatchLibraryCommand(
+            commandID: UUID(),
+            kind: .delete,
+            youtubeID: "receiver007",
+            revision: 2
+        )
+        let stagedCommand = try fixture.stager.stageCommand(userInfo: command.userInfo())
+
+        fixture.peer.emitCommand(stagedCommand)
+        await waitUntil { fetch(WatchSavedAudio.self, fixture.context).isEmpty }
+
+        XCTAssertEqual(stoppedVideoIDs, ["receiver007"])
+    }
+
     func testInvalidOutboxRowDoesNotBlockLaterAcknowledgementOrInventory() async throws {
         let fixture = try makeFixture()
         let poison = WatchPendingAcknowledgement(
@@ -124,7 +193,9 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertTrue(try fixture.service.pendingAcknowledgements().isEmpty)
     }
 
-    private func makeFixture() throws -> ReceiverFixture {
+    private func makeFixture(
+        invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+    ) throws -> ReceiverFixture {
         let container = try ModelContainer(
             for: WatchSavedAudio.self,
             WatchDeletionTombstone.self,
@@ -147,7 +218,8 @@ final class WatchSessionReceiverTests: XCTestCase {
             stager: stager,
             library: service,
             peer: peer,
-            availableCapacity: { 123_456 }
+            availableCapacity: { 123_456 },
+            invalidatePlaybackItem: invalidatePlaybackItem
         )
         return ReceiverFixture(
             container: container,
