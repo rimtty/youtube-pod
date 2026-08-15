@@ -6,8 +6,10 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var savedAudios: [SavedAudio]
+    @Query private var watchTransferRecords: [WatchTransferRecord]
 
     @State private var selectedTab = AppTab.home
+    @State private var offlineSelectedTab = AppTab.library
     @State private var showsAccount = false
     @State private var showsPlayer = false
     @State private var isBrowsingOfflineLibrary = false
@@ -33,7 +35,12 @@ struct RootView: View {
                 }
             }
             .onChange(of: savedAudios.count) { _, count in
-                if count == 0 {
+                if count == 0, watchAudioCount == 0 {
+                    isBrowsingOfflineLibrary = false
+                }
+            }
+            .onChange(of: watchAudioCount) { _, count in
+                if count == 0, savedAudios.isEmpty {
                     isBrowsingOfflineLibrary = false
                 }
             }
@@ -65,7 +72,9 @@ struct RootView: View {
             case .signedOut, .signingIn, .authorizationRequired, .failed:
                 AuthenticationView(
                     savedAudioCount: savedAudios.count,
+                    watchAudioCount: watchAudioCount,
                     openOfflineLibrary: {
+                        offlineSelectedTab = savedAudios.isEmpty && watchAudioCount > 0 ? .watch : .library
                         isBrowsingOfflineLibrary = true
                     }
                 )
@@ -88,17 +97,29 @@ struct RootView: View {
     }
 
     private var offlineLibrary: some View {
-        tabContent {
-            LibraryView(
-                allowsOnlineActions: false,
-                closeOfflineLibrary: {
-                    isBrowsingOfflineLibrary = false
-                },
-                signIn: {
-                    Task { try? await environment.auth.signIn() }
+        TabView(selection: $offlineSelectedTab) {
+            Tab("ライブラリ", systemImage: "headphones", value: .library) {
+                tabContent {
+                    LibraryView(
+                        allowsOnlineActions: false,
+                        closeOfflineLibrary: {
+                            isBrowsingOfflineLibrary = false
+                        },
+                        signIn: {
+                            Task { try? await environment.auth.signIn() }
+                        }
+                    )
                 }
-            )
+            }
+            .badge(unplayedAudioCount)
+
+            Tab("Watch", systemImage: "applewatch", value: .watch) {
+                tabContent {
+                    WatchTransfersView()
+                }
+            }
         }
+        .tint(PodPalette.raspberry)
     }
 
     @ViewBuilder
@@ -157,6 +178,12 @@ struct RootView: View {
                 }
             }
             .badge(unplayedAudioCount)
+
+            Tab("Watch", systemImage: "applewatch", value: .watch) {
+                tabContent {
+                    WatchTransfersView()
+                }
+            }
         }
         .tint(PodPalette.raspberry)
     }
@@ -203,6 +230,10 @@ struct RootView: View {
         savedAudios.lazy.filter { !$0.hasBeenPlayed }.count
     }
 
+    private var watchAudioCount: Int {
+        watchTransferRecords.lazy.filter { $0.state != .removedFromWatch }.count
+    }
+
     private func phase(for videoID: String) -> DownloadPhase? {
         environment.downloads.phases[videoID]
             ?? (savedAudios.contains { $0.youtubeID == videoID } ? .completed : nil)
@@ -221,4 +252,5 @@ private enum AppTab: Hashable {
     case home
     case subscriptions
     case library
+    case watch
 }

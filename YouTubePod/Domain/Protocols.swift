@@ -43,9 +43,12 @@ protocol AudioPlaying: AnyObject {
 protocol WatchTransferManaging: AnyObject {
     var connectionStatus: WatchConnectionStatus { get }
     var liveProgress: [String: Double] { get }
+    var latestInventory: WatchInventorySnapshot? { get }
 
     func start()
+    func refreshState()
     func enqueue(_ source: WatchTransferSource) async throws
     func cancel(videoID: String)
     func retry(videoID: String) async throws
+    func requestDeletion(videoID: String) throws
 }

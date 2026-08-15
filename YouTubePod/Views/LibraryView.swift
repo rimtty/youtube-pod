@@ -4,8 +4,10 @@ import SwiftUI
 struct LibraryView: View {
     @Environment(AppEnvironment.self) private var environment
     @Query(sort: \SavedAudio.downloadedAt, order: .reverse) private var audios: [SavedAudio]
+    @Query private var watchTransferRecords: [WatchTransferRecord]
 
     @State private var deletionTarget: SavedAudio?
+    @State private var watchDeletionTarget: WatchTransferRecord?
     @State private var errorMessage: String?
 
     var allowsOnlineActions = true
@@ -32,7 +34,13 @@ struct LibraryView: View {
                                         thumbnailURL: environment.library.thumbnailURL(for: audio),
                                         isCurrentItem: environment.player.currentItem?.id == audio.youtubeID,
                                         isPlaying: environment.player.isPlaying,
-                                        onPlay: { play(audio) }
+                                        watchTransferRecord: watchTransferRecord(for: audio.youtubeID),
+                                        watchTransferProgress: environment.watchTransfers.liveProgress[audio.youtubeID],
+                                        watchCanTransfer: environment.watchTransfers.connectionStatus.canTransfer,
+                                        onPlay: { play(audio) },
+                                        onWatchAction: { action in
+                                            performWatchAction(action, for: audio)
+                                        }
                                     )
                                     .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                                     .listRowSeparator(.hidden)
@@ -89,6 +97,19 @@ struct LibraryView: View {
             } message: { audio in
                 Text("「\(audio.title)」の音声とサムネイルをこの端末から削除します。")
             }
+            .alert("Watchから削除しますか？", isPresented: watchDeletionPresented, presenting: watchDeletionTarget) { record in
+                Button("Watchから削除", role: .destructive) {
+                    do {
+                        try environment.watchTransfers.requestDeletion(videoID: record.youtubeID)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                    watchDeletionTarget = nil
+                }
+                Button("キャンセル", role: .cancel) { watchDeletionTarget = nil }
+            } message: { record in
+                Text("「\(record.title)」をApple Watchから削除します。iPhoneの音声は残ります。")
+            }
             .alert("操作を完了できませんでした", isPresented: errorPresented) {
                 Button("OK") { errorMessage = nil }
             } message: {
@@ -118,9 +139,68 @@ struct LibraryView: View {
         )
     }
 
+    private var watchDeletionPresented: Binding<Bool> {
+        Binding(
+            get: { watchDeletionTarget != nil },
+            set: { if !$0 { watchDeletionTarget = nil } }
+        )
+    }
+
     private func play(_ audio: SavedAudio) {
         let queue = audios.map(playbackItem)
         environment.player.play(playbackItem(audio), queue: queue)
+    }
+
+    private func watchTransferRecord(for videoID: String) -> WatchTransferRecord? {
+        watchTransferRecords.first { $0.youtubeID == videoID }
+    }
+
+    private func performWatchAction(_ action: WatchTransferAction, for audio: SavedAudio) {
+        switch action {
+        case .enqueue:
+            enqueueOnWatch(audio)
+        case .retry:
+            if watchTransferRecord(for: audio.youtubeID)?.state == .reconciliationRequired {
+                // Confirmed transfers no longer retain their staging snapshot.
+                // Reconciliation therefore needs a fresh snapshot and revision
+                // from the iPhone library instead of clone-based retry.
+                enqueueOnWatch(audio)
+                return
+            }
+            Task {
+                do {
+                    try await environment.watchTransfers.retry(videoID: audio.youtubeID)
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            }
+        case .cancel:
+            environment.watchTransfers.cancel(videoID: audio.youtubeID)
+        case .deleteFromWatch:
+            watchDeletionTarget = watchTransferRecord(for: audio.youtubeID)
+        }
+    }
+
+    private func enqueueOnWatch(_ audio: SavedAudio) {
+        Task {
+            do {
+                try await environment.watchTransfers.enqueue(
+                    WatchTransferSource(
+                        youtubeID: audio.youtubeID,
+                        title: audio.title,
+                        channelTitle: audio.channelTitle,
+                        publishedAt: audio.publishedAt,
+                        savedViewCount: audio.savedViewCount,
+                        duration: audio.duration,
+                        playbackPosition: audio.lastPlaybackPosition,
+                        audioURL: environment.library.audioURL(for: audio),
+                        artworkURL: environment.library.thumbnailURL(for: audio)
+                    )
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func playbackItem(_ audio: SavedAudio) -> PlaybackItem {
@@ -166,14 +246,18 @@ private struct LibraryAudioRow: View {
     let thumbnailURL: URL?
     let isCurrentItem: Bool
     let isPlaying: Bool
+    let watchTransferRecord: WatchTransferRecord?
+    let watchTransferProgress: Double?
+    let watchCanTransfer: Bool
     let onPlay: () -> Void
+    let onWatchAction: (WatchTransferAction) -> Void
 
     var body: some View {
-        Button(action: onPlay) {
-            let layout = dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                : AnyLayout(HStackLayout(spacing: 14))
-            VStack(alignment: .leading, spacing: 10) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 14))
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: onPlay) {
                 layout {
                     ZStack {
                         PodArtworkImage(url: thumbnailURL)
@@ -218,26 +302,26 @@ private struct LibraryAudioRow: View {
                     }
                     Spacer(minLength: 0)
                 }
-
-                if audio.hasBeenPlayed {
-                    LibraryPlaybackProgress(
-                        audio: audio,
-                        isCurrentItem: isCurrentItem,
-                        isPlaying: isPlaying
-                    )
-                }
             }
-            .padding(11)
-            .podCard()
+            .buttonStyle(.plain)
+            .accessibilityLabel(playbackAccessibilityLabel)
+            .accessibilityHint("ダブルタップして再生")
+
+            LibraryPlaybackFooter(
+                audio: audio,
+                isCurrentItem: isCurrentItem,
+                isPlaying: isPlaying,
+                watchTransferRecord: watchTransferRecord,
+                watchTransferProgress: watchTransferProgress,
+                watchCanTransfer: watchCanTransfer,
+                onWatchAction: onWatchAction
+            )
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-            accessibilityLabel
-        )
-        .accessibilityHint("ダブルタップして再生")
+        .padding(11)
+        .podCard()
     }
 
-    private var accessibilityLabel: String {
+    private var playbackAccessibilityLabel: String {
         let playbackState = isCurrentItem ? (isPlaying ? "再生中、" : "一時停止中、") : ""
         let base = "\(playbackState)\(audio.hasBeenPlayed ? "" : "新着、")\(audio.title)、\(audio.channelTitle)、\(DisplayFormatter.duration(audio.duration))"
         guard audio.hasBeenPlayed else { return base }
@@ -245,21 +329,34 @@ private struct LibraryAudioRow: View {
     }
 }
 
-private struct LibraryPlaybackProgress: View {
+private struct LibraryPlaybackFooter: View {
     let audio: SavedAudio
     let isCurrentItem: Bool
     let isPlaying: Bool
+    let watchTransferRecord: WatchTransferRecord?
+    let watchTransferProgress: Double?
+    let watchCanTransfer: Bool
+    let onWatchAction: (WatchTransferAction) -> Void
 
     var body: some View {
         VStack(spacing: 5) {
             HStack(alignment: .bottom, spacing: 8) {
-                Label {
-                    Text("前回 \(DisplayFormatter.duration(audio.lastPlaybackPosition))")
-                } icon: {
-                    Image(systemName: "clock.arrow.circlepath")
+                if audio.hasBeenPlayed {
+                    Label {
+                        Text("前回 \(DisplayFormatter.duration(audio.lastPlaybackPosition))")
+                    } icon: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
                 }
                 Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 4) {
+                HStack(alignment: .center, spacing: 7) {
+                    WatchTransferActionButton(
+                        record: watchTransferRecord,
+                        liveProgress: watchTransferProgress,
+                        canTransfer: watchCanTransfer,
+                        onAction: onWatchAction
+                    )
+
                     if isCurrentItem {
                         Label(
                             isPlaying ? "再生中" : "一時停止",
@@ -272,25 +369,28 @@ private struct LibraryPlaybackProgress: View {
                         .background(PodPalette.brandGradient, in: Capsule())
                     }
 
-                    Text("\(percentage)%")
-                        .monospacedDigit()
+                    if audio.hasBeenPlayed {
+                        Text("\(percentage)%")
+                            .monospacedDigit()
+                    }
                 }
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
 
-            GeometryReader { proxy in
-                Capsule()
-                    .fill(Color.primary.opacity(0.09))
-                    .overlay(alignment: .leading) {
-                        Capsule()
-                            .fill(PodPalette.brandGradient)
-                            .frame(width: proxy.size.width * audio.playbackProgress)
-                    }
+            if audio.hasBeenPlayed {
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(Color.primary.opacity(0.09))
+                        .overlay(alignment: .leading) {
+                            Capsule()
+                                .fill(PodPalette.brandGradient)
+                                .frame(width: proxy.size.width * audio.playbackProgress)
+                        }
+                }
+                .frame(height: 5)
             }
-            .frame(height: 5)
         }
-        .accessibilityHidden(true)
     }
 
     private var percentage: Int {

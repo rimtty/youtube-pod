@@ -29,6 +29,7 @@ struct AuthenticationView: View {
     @State private var isAnimatingWaveform = false
 
     let savedAudioCount: Int
+    var watchAudioCount = 0
     let openOfflineLibrary: () -> Void
 
     var body: some View {
@@ -221,11 +222,11 @@ struct AuthenticationView: View {
             .tint(PodPalette.violet)
             .disabled(environment.auth.isWorking || !environment.auth.isConfigured)
 
-            if savedAudioCount > 0 {
+            if savedAudioCount > 0 || watchAudioCount > 0 {
                 Button(action: openOfflineLibrary) {
                     Label(
-                        "保存済みの音声を開く（\(savedAudioCount)件）",
-                        systemImage: "headphones"
+                        offlineLibraryLabel,
+                        systemImage: watchAudioCount > 0 ? "applewatch" : "headphones"
                     )
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
@@ -234,7 +235,7 @@ struct AuthenticationView: View {
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
                 .tint(PodPalette.violet)
-                .accessibilityHint("Googleログインなしで端末内の音声を再生します")
+                .accessibilityHint("GoogleログインなしでiPhoneとApple Watchの保存済み音声を管理します")
             }
 
             Text("youtube.readonly 権限のみを使用します")
@@ -249,6 +250,13 @@ struct AuthenticationView: View {
                 ? AnyShapeStyle(Color(.systemBackground))
                 : AnyShapeStyle(.ultraThinMaterial)
         )
+    }
+
+    private var offlineLibraryLabel: String {
+        if watchAudioCount > 0 {
+            return "ローカルとWatch管理を開く（iPhone \(savedAudioCount)・Watch \(watchAudioCount)）"
+        }
+        return "保存済みの音声を開く（\(savedAudioCount)件）"
     }
 }
 

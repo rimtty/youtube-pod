@@ -9,6 +9,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private let modelContext: ModelContext
     private let transport: any WatchConnectivityTransport
     private let snapshots: any WatchTransferSnapshotStoring
+    private let inventoryCursorStore: any WatchInventoryCursorStoring
     private let automaticRetryDelays: [Duration]
     private let confirmationTimeout: TimeInterval
     private var activeTransferID: UUID?
@@ -21,11 +22,13 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private(set) var connectionStatus: WatchConnectionStatus
     private(set) var liveProgress: [String: Double] = [:]
     private(set) var lastPersistenceError: String?
+    private(set) var latestInventory: WatchInventorySnapshot?
 
     init(
         modelContext: ModelContext,
         transport: any WatchConnectivityTransport,
         snapshots: any WatchTransferSnapshotStoring,
+        inventoryCursorStore: any WatchInventoryCursorStoring = UserDefaultsWatchInventoryCursorStore(),
         automaticRetryDelays: [Duration] = [.seconds(2), .seconds(10)],
         confirmationTimeout: TimeInterval = 30 * 60
     ) {
@@ -33,6 +36,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         self.modelContext = modelContext
         self.transport = transport
         self.snapshots = snapshots
+        self.inventoryCursorStore = inventoryCursorStore
         self.automaticRetryDelays = automaticRetryDelays
         self.confirmationTimeout = confirmationTimeout
         connectionStatus = transport.status
@@ -44,6 +48,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         transport.eventHandler = { [weak self] event in
             self?.handle(event)
         }
+        transport.activate()
+    }
+
+    func refreshState() {
         transport.activate()
     }
 
@@ -219,6 +227,46 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         await startNextQueuedTransferIfPossible()
     }
 
+    func requestDeletion(videoID: String) throws {
+        guard connectionStatus.canTransfer else {
+            throw WatchTransferServiceError.watchUnavailable
+        }
+        guard let record = record(videoID: videoID) else {
+            throw WatchTransferServiceError.deletionUnavailable
+        }
+        guard record.state == .availableOnWatch
+                || record.state == .deletionPending
+                || record.state == .reconciliationRequired
+                || (record.state == .failed && record.lastErrorCode == "delete-send") else {
+            if record.state == .removedFromWatch { return }
+            throw WatchTransferServiceError.deletionUnavailable
+        }
+
+        cancelScheduledTasks(videoID: videoID)
+        record.state = .deletionPending
+        record.lastErrorCode = nil
+        record.lastErrorMessage = nil
+        record.updatedAt = .now
+        guard persistChanges() else {
+            throw WatchTransferServiceError.persistence(
+                lastPersistenceError ?? "Apple Watch削除状態を保存できませんでした。"
+            )
+        }
+        transport.cancelFiles(transferID: record.transferID)
+
+        do {
+            try sendDeletionCommand(for: record)
+        } catch {
+            // Keep the durable intent. The same identity is safe to resend on
+            // retry or after WCSession activation.
+            record.lastErrorCode = "delete-send"
+            record.lastErrorMessage = error.localizedDescription
+            record.updatedAt = .now
+            _ = persistChanges()
+            throw error
+        }
+    }
+
     private func handle(_ event: WatchConnectivityEvent) {
         switch event {
         case .statusChanged(let status):
@@ -229,6 +277,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             // didFinish callback could hold the serial queue forever.
             sessionStartedTransferIDs.removeAll()
             if status.canTransfer {
+                resendPendingDeletionCommands()
                 Task { @MainActor [weak self] in
                     await self?.reconcileAndResumeTransfers()
                 }
@@ -290,6 +339,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
 
         case .acknowledgement(let acknowledgement):
             handleAcknowledgement(acknowledgement)
+
+        case .inventory(let inventory):
+            handleInventory(inventory)
         }
     }
 
@@ -301,6 +353,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
 
         switch acknowledgement.outcome {
         case .imported:
+            // A delayed import acknowledgement cannot undo a persisted user
+            // deletion intent (or a deletion already confirmed).
+            guard record.state != .deletionPending,
+                  record.state != .removedFromWatch else { return }
             record.watchImportConfirmed = true
             record.watchImportFailed = false
             record.confirmedAt = .now
@@ -308,6 +364,18 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.lastErrorMessage = nil
             completeEvent(for: record)
         case .failed:
+            // Once deletion is confirmed, a delayed failure from an older
+            // import/command delivery must not resurrect the record.
+            guard record.state != .removedFromWatch else { return }
+            if record.state == .deletionPending {
+                record.state = .reconciliationRequired
+                record.lastErrorCode = "watch-delete"
+                record.lastErrorMessage = acknowledgement.message
+                    ?? "Apple Watchで音声を削除できませんでした。"
+                record.updatedAt = .now
+                _ = persistChanges()
+                return
+            }
             record.watchImportFailed = true
             record.senderFailed = true
             transport.cancelFiles(transferID: record.transferID)
@@ -336,6 +404,166 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 Task { await snapshots.removeTransfer(acknowledgement.transferID) }
                 scheduleNextQueuedTransferIfNeeded()
             }
+        }
+    }
+
+    private func handleInventory(_ inventory: WatchInventorySnapshot) {
+        guard inventoryEntriesAreUnique(inventory.entries) else { return }
+        let previousCursor = inventoryCursorStore.load()
+        guard shouldAccept(inventory, after: previousCursor) else { return }
+
+        let records = fetchRecords()
+        guard lastPersistenceError == nil else { return }
+        let entries = Dictionary(uniqueKeysWithValues: inventory.entries.map { ($0.youtubeID, $0) })
+
+        for record in records {
+            if let entry = entries[record.youtubeID] {
+                if record.state == .removedFromWatch {
+                    // A delayed application context can outlive the deleted
+                    // acknowledgement that superseded it.
+                    continue
+                }
+                guard entry.transferID == record.transferID,
+                      entry.revision == record.revision else {
+                    // A different identity is never allowed to overwrite the
+                    // phone's durable transfer identity. Only flag a record
+                    // that had previously claimed Watch availability.
+                    if record.state == .availableOnWatch {
+                        record.state = .reconciliationRequired
+                        record.lastErrorCode = "watch-inventory-conflict"
+                        record.lastErrorMessage = "Apple Watch上の項目と転送履歴が一致しません。"
+                        record.updatedAt = .now
+                    }
+                    continue
+                }
+
+                if record.state == .deletionPending {
+                    // The Watch still reports the item. Keep the deletion
+                    // intent and await its deleted acknowledgement or a later
+                    // inventory that no longer contains the item.
+                    continue
+                }
+                guard entry.fileSize == record.sourceFileSize else {
+                    record.state = .reconciliationRequired
+                    record.lastErrorCode = "watch-inventory-size"
+                    record.lastErrorMessage = "Apple Watch上の音声サイズが転送履歴と一致しません。"
+                    record.updatedAt = .now
+                    continue
+                }
+                cancelScheduledTasks(videoID: record.youtubeID)
+                transport.cancelFiles(transferID: record.transferID)
+                record.watchImportConfirmed = true
+                record.watchImportFailed = false
+                record.senderFailed = false
+                record.audioDeliveryFinished = true
+                record.artworkDeliveryFinished = true
+                record.lastKnownProgress = 1
+                record.confirmedAt = max(record.confirmedAt ?? .distantPast, inventory.generatedAt)
+                record.lastErrorCode = nil
+                record.lastErrorMessage = nil
+                record.state = .availableOnWatch
+                if activeTransferID == record.transferID { activeTransferID = nil }
+                sessionStartedTransferIDs.remove(record.transferID)
+                liveProgress[record.youtubeID] = nil
+                record.updatedAt = .now
+            } else {
+                switch record.state {
+                case .deletionPending:
+                    // Absence is authoritative only when the user has already
+                    // requested this exact record be deleted.
+                    record.state = .removedFromWatch
+                    record.watchImportConfirmed = false
+                    record.watchImportFailed = false
+                    record.confirmedAt = inventory.generatedAt
+                    record.lastErrorCode = nil
+                    record.lastErrorMessage = nil
+                    liveProgress[record.youtubeID] = nil
+                case .availableOnWatch:
+                    // A missing entry alone is not proof of deletion: an
+                    // incomplete/corrupt Watch library can omit a file. Keep
+                    // the record and require reconciliation instead.
+                    record.state = .reconciliationRequired
+                    record.lastErrorCode = "watch-inventory-missing"
+                    record.lastErrorMessage = "Apple Watch上の音声を確認できません。"
+                    record.updatedAt = .now
+                default:
+                    break
+                }
+            }
+        }
+
+        guard persistChanges() else { return }
+        do {
+            try inventoryCursorStore.save(WatchInventoryCursor(snapshot: inventory))
+            latestInventory = inventory
+        } catch {
+            lastPersistenceError = error.localizedDescription
+            return
+        }
+
+        for record in records where record.state == .removedFromWatch {
+            let transferID = record.transferID
+            Task { await snapshots.removeTransfer(transferID) }
+        }
+    }
+
+    private func resendPendingDeletionCommands() {
+        for record in fetchRecords() where record.state == .deletionPending {
+            do {
+                try sendDeletionCommand(for: record)
+                record.lastErrorCode = nil
+                record.lastErrorMessage = nil
+            } catch {
+                record.lastErrorCode = "delete-send"
+                record.lastErrorMessage = error.localizedDescription
+            }
+            record.updatedAt = .now
+        }
+        _ = persistChanges()
+    }
+
+    private func sendDeletionCommand(for record: WatchTransferRecord) throws {
+        try transport.sendDeletionCommand(WatchLibraryCommand(
+            commandID: record.transferID,
+            kind: .delete,
+            youtubeID: record.youtubeID,
+            revision: record.revision
+        ))
+    }
+
+    private func inventoryEntriesAreUnique(_ entries: [WatchInventoryEntry]) -> Bool {
+        Set(entries.map(\.youtubeID)).count == entries.count
+    }
+
+    private func shouldAccept(
+        _ inventory: WatchInventorySnapshot,
+        after cursor: WatchInventoryCursor?
+    ) -> Bool {
+        guard let cursor else { return true }
+        if inventory.libraryInstanceID == cursor.libraryInstanceID {
+            if inventory.generation > cursor.generation { return true }
+            guard inventory.generation == cursor.generation else { return false }
+            // A generation identifies one library mutation boundary. Refuse
+            // conflicting contents or an older publication carrying the same
+            // generation number.
+            return inventory.generatedAt >= cursor.generatedAt
+                && normalizedEntries(inventory.entries) == normalizedEntries(cursor.entries)
+        }
+        // Generations are scoped to a library instance. A timestamp prevents
+        // a delayed snapshot from the previous Watch library switching the
+        // phone back after a reinstall/reset.
+        return inventory.generatedAt > cursor.generatedAt
+    }
+
+    private func normalizedEntries(_ entries: [WatchInventoryEntry]) -> [WatchInventoryEntry] {
+        entries.sorted {
+            if $0.youtubeID == $1.youtubeID {
+                if $0.revision == $1.revision {
+                    return $0.transferID.uuidString < $1.transferID.uuidString
+                }
+                return $0.revision < $1.revision
+            }
+            return $0.youtubeID < $1.youtubeID
         }
     }
 
@@ -701,6 +929,7 @@ private extension WatchTransferState {
 enum WatchTransferServiceError: LocalizedError {
     case watchUnavailable
     case retryUnavailable
+    case deletionUnavailable
     case persistence(String)
 
     var errorDescription: String? {
@@ -709,8 +938,49 @@ enum WatchTransferServiceError: LocalizedError {
             "ペアリング済みApple WatchとWatchアプリを確認してください。"
         case .retryUnavailable:
             "この転送は再試行できません。"
+        case .deletionUnavailable:
+            "この項目はApple Watchから削除できません。"
         case .persistence(let message):
             "転送状態を保存できませんでした: \(message)"
         }
+    }
+}
+
+struct WatchInventoryCursor: Codable, Equatable, Sendable {
+    let libraryInstanceID: UUID
+    let generation: Int64
+    let generatedAt: Date
+    let entries: [WatchInventoryEntry]
+
+    init(snapshot: WatchInventorySnapshot) {
+        libraryInstanceID = snapshot.libraryInstanceID
+        generation = snapshot.generation
+        generatedAt = snapshot.generatedAt
+        entries = snapshot.entries
+    }
+}
+
+@MainActor
+protocol WatchInventoryCursorStoring: AnyObject {
+    func load() -> WatchInventoryCursor?
+    func save(_ cursor: WatchInventoryCursor) throws
+}
+
+@MainActor
+final class UserDefaultsWatchInventoryCursorStore: WatchInventoryCursorStoring {
+    private static let key = "com.rimtty.YouTubePod.watchInventoryCursor"
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func load() -> WatchInventoryCursor? {
+        guard let data = defaults.data(forKey: Self.key) else { return nil }
+        return try? JSONDecoder().decode(WatchInventoryCursor.self, from: data)
+    }
+
+    func save(_ cursor: WatchInventoryCursor) throws {
+        defaults.set(try JSONEncoder().encode(cursor), forKey: Self.key)
     }
 }

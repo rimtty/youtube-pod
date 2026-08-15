@@ -30,6 +30,11 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
             return
         }
         session.delegate = self
+        if session.activationState == .activated {
+            eventHandler?(.statusChanged(status))
+            emitInventory(from: session.receivedApplicationContext)
+            return
+        }
         eventHandler?(.statusChanged(WatchConnectionStatus(
             activation: .activating,
             isPaired: session.isPaired,
@@ -58,6 +63,12 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         guard status.canTransfer else { throw WatchConnectivityAdapterError.unavailable }
         let transfer = session.transferFile(url, metadata: try envelope.metadata())
         observeProgress(of: transfer, envelope: envelope)
+    }
+
+    func sendDeletionCommand(_ command: WatchLibraryCommand) throws {
+        guard let session else { throw WatchConnectivityAdapterError.unsupported }
+        guard status.canTransfer else { throw WatchConnectivityAdapterError.unavailable }
+        session.transferUserInfo(try command.userInfo())
     }
 
     func cancelFiles(transferID: UUID) {
@@ -90,6 +101,13 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         eventHandler?(.fileFinished(key, failure))
     }
 
+    private func emitInventory(from applicationContext: [String: Any]) {
+        guard let inventory = try? WatchInventorySnapshot.decode(
+            applicationContext: applicationContext
+        ) else { return }
+        eventHandler?(.inventory(inventory))
+    }
+
     private static func activation(from state: WCSessionActivationState) -> WatchSessionActivation {
         switch state {
         case .notActivated: .inactive
@@ -109,6 +127,9 @@ extension WCSessionAdapter: WCSessionDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.eventHandler?(.statusChanged(self.status))
+            if activationState == .activated, error == nil {
+                self.emitInventory(from: session.receivedApplicationContext)
+            }
         }
     }
 
@@ -163,6 +184,18 @@ extension WCSessionAdapter: WCSessionDelegate {
         guard let acknowledgement = try? WatchTransferAcknowledgement.decode(userInfo: userInfo) else { return }
         Task { @MainActor [weak self] in
             self?.eventHandler?(.acknowledgement(acknowledgement))
+        }
+    }
+
+    nonisolated func session(
+        _ session: WCSession,
+        didReceiveApplicationContext applicationContext: [String: Any]
+    ) {
+        guard let inventory = try? WatchInventorySnapshot.decode(
+            applicationContext: applicationContext
+        ) else { return }
+        Task { @MainActor [weak self] in
+            self?.eventHandler?(.inventory(inventory))
         }
     }
 }
