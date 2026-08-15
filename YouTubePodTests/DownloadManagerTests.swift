@@ -157,6 +157,105 @@ final class DownloadManagerTests: XCTestCase {
         XCTAssertEqual(manager.phases[item.id], .completed)
     }
 
+    func testDiscardingCompletedPhaseRemovesDownloadState() async throws {
+        let manager = DownloadManager(extractor: ImmediateExtractor(), library: LibraryStub())
+        let item = video(id: "discard0001")
+        manager.enqueue(item)
+        try await waitUntil { manager.phases[item.id] == .completed }
+
+        manager.discardTerminalPhase(videoID: item.id)
+
+        XCTAssertNil(manager.phases[item.id])
+    }
+
+    func testDiscardingTerminalPhaseDoesNotClearActiveDownload() async throws {
+        let extractor = BlockingExtractor()
+        let manager = DownloadManager(extractor: extractor, library: LibraryStub())
+        let item = video(id: "discard0002")
+        manager.enqueue(item)
+        try await waitUntil { manager.phases[item.id] == .downloading(0) }
+
+        manager.discardTerminalPhase(videoID: item.id)
+
+        XCTAssertEqual(manager.phases[item.id], .downloading(0))
+        await manager.cancel(videoID: item.id)
+    }
+
+    func testCancelAllCancelsActiveExtractionAndQueuedItems() async throws {
+        let extractor = BlockingExtractor()
+        let library = LibraryStub()
+        let manager = DownloadManager(extractor: extractor, library: library)
+        let active = video(id: "cancelall01")
+        let queued = video(id: "cancelall02")
+        manager.enqueue(active)
+        manager.enqueue(queued)
+        try await waitUntil { manager.phases[active.id] == .downloading(0) }
+
+        await manager.cancelAll()
+        try await waitUntil { manager.phases[active.id] == .failed("キャンセルしました") }
+
+        XCTAssertEqual(
+            manager.phases[queued.id],
+            .failed("バックグラウンド移行のためキャンセルしました")
+        )
+        let cancelCount = await extractor.cancelCount
+        XCTAssertEqual(cancelCount, 1)
+        XCTAssertTrue(library.importedVideoIDs.isEmpty)
+    }
+
+    func testCancelAllDuringRetryDelayPreventsAnotherAttempt() async throws {
+        let extractor = AlwaysFailingExtractor(message: "一時的な通信エラー")
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: LibraryStub(),
+            extractionRetryDelays: [.seconds(5)]
+        )
+        let item = video(id: "cancelall03")
+        manager.enqueue(item)
+        try await waitUntil {
+            if case .retrying = manager.phases[item.id] { return true }
+            return false
+        }
+
+        await manager.cancelAll()
+        try await waitUntil { manager.phases[item.id] == .failed("キャンセルしました") }
+
+        let attempts = await extractor.attempts
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testCancelAllDuringValidationDeletesImportedResult() async throws {
+        let library = BlockingLibraryStub()
+        let manager = DownloadManager(extractor: ImmediateExtractor(), library: library)
+        let item = video(id: "cancelall04")
+        manager.enqueue(item)
+        try await waitUntil { manager.phases[item.id] == .validating }
+
+        await manager.cancelAll()
+        library.completeImport()
+        try await waitUntil { manager.phases[item.id] == .failed("キャンセルしました") }
+
+        XCTAssertEqual(library.deletedVideoIDs, [item.id])
+    }
+
+    func testImportFailureDoesNotPreventNextQueuedItemFromCompleting() async throws {
+        let library = FailFirstImportLibraryStub()
+        let manager = DownloadManager(extractor: ImmediateExtractor(), library: library)
+        let first = video(id: "importfail1")
+        let second = video(id: "importnext1")
+        manager.enqueue(first)
+        manager.enqueue(second)
+
+        try await waitUntil {
+            if case .failed = manager.phases[first.id] {
+                return manager.phases[second.id] == .completed
+            }
+            return false
+        }
+
+        XCTAssertEqual(library.importedVideoIDs, [first.id, second.id])
+    }
+
     private func waitUntil(
         timeout: Duration = .seconds(2),
         condition: @escaping @MainActor () -> Bool
@@ -338,4 +437,38 @@ private final class BlockingLibraryStub: AudioLibraryManaging {
     func markPlayed(videoID: String) {}
     func audioURL(for audio: SavedAudio) -> URL { URL(fileURLWithPath: "/tmp/\(audio.youtubeID).m4a") }
     func thumbnailURL(for audio: SavedAudio) -> URL? { nil }
+}
+
+@MainActor
+private final class FailFirstImportLibraryStub: AudioLibraryManaging {
+    private(set) var importedVideoIDs: [String] = []
+
+    func importAudio(_ extracted: ExtractedAudio, metadata: VideoSummary) async throws -> SavedAudio {
+        importedVideoIDs.append(metadata.id)
+        if importedVideoIDs.count == 1 {
+            throw TestImportError.failed
+        }
+        return SavedAudio(
+            youtubeID: metadata.id,
+            title: metadata.title,
+            channelTitle: metadata.channelTitle,
+            publishedAt: metadata.publishedAt,
+            savedViewCount: metadata.viewCount,
+            duration: metadata.duration,
+            fileSize: 1,
+            audioRelativePath: "Audio/\(metadata.id).m4a"
+        )
+    }
+
+    func delete(_ audio: SavedAudio) throws {}
+    func updateStatistics(_ counts: [String: Int64]) throws {}
+    func updatePlaybackPosition(videoID: String, position: TimeInterval) {}
+    func markPlayed(videoID: String) {}
+    func audioURL(for audio: SavedAudio) -> URL { URL(fileURLWithPath: "/tmp/\(audio.youtubeID).m4a") }
+    func thumbnailURL(for audio: SavedAudio) -> URL? { nil }
+}
+
+private enum TestImportError: LocalizedError {
+    case failed
+    var errorDescription: String? { "Import failed" }
 }

@@ -56,6 +56,11 @@ final class DownloadManager {
         }
     }
 
+    func discardTerminalPhase(videoID: String) {
+        guard phases[videoID]?.isActive != true else { return }
+        phases.removeValue(forKey: videoID)
+    }
+
     private func startWorkerIfNeeded() {
         guard workerTask == nil else { return }
         workerTask = Task { [weak self] in await self?.drainQueue() }

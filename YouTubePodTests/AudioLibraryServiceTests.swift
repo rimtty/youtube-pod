@@ -234,6 +234,31 @@ final class AudioLibraryServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: thumbnailURL.path))
     }
 
+    func testServiceStartupRemovesHiddenStagingFileFromInterruptedImport() throws {
+        let container = try ModelContainer(
+            for: SavedAudio.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let firstService = AudioLibraryService(modelContext: container.mainContext)
+        let placeholder = SavedAudio(
+            youtubeID: "staging0001",
+            title: "Staging",
+            channelTitle: "Test channel",
+            publishedAt: .now,
+            savedViewCount: 1,
+            duration: 1,
+            fileSize: 1,
+            audioRelativePath: "Audio/.staging0001-interrupted.m4a"
+        )
+        let hiddenStagingURL = firstService.audioURL(for: placeholder)
+        try Data([0]).write(to: hiddenStagingURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: hiddenStagingURL.path))
+
+        _ = AudioLibraryService(modelContext: container.mainContext)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hiddenStagingURL.path))
+    }
+
     func testServiceStartupRemovesMetadataWhoseAudioFileIsMissing() throws {
         let container = try ModelContainer(
             for: SavedAudio.self,

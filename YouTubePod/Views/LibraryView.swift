@@ -141,6 +141,7 @@ struct LibraryView: View {
         environment.player.removeFromQueue(videoID: audio.youtubeID)
         do {
             try environment.library.delete(audio)
+            environment.downloads.discardTerminalPhase(videoID: audio.youtubeID)
         } catch {
             errorMessage = error.localizedDescription
         }

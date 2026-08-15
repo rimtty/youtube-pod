@@ -11,20 +11,25 @@ actor YouTubeDataClient: YouTubeCatalogServing {
     private var cache: [String: CacheEntry] = [:]
     private var inFlight: [String: InFlightRequest] = [:]
     private let playlistRequestLimiter = AsyncRequestLimiter(limit: 4)
-    private let cacheLifetime: TimeInterval = 15 * 60
+    private let cacheLifetime: TimeInterval
     private let manualRefreshCooldown: TimeInterval
+    private let now: @Sendable () -> Date
     private let logger = Logger(subsystem: "com.rimtty.YouTubePod", category: "YouTubeData")
 
     init(
         credentialProvider: @escaping CredentialProvider,
         authenticationFailureHandler: @escaping AuthenticationFailureHandler = {},
         session: URLSession = .shared,
-        manualRefreshCooldown: TimeInterval = 60
+        manualRefreshCooldown: TimeInterval = 60,
+        cacheLifetime: TimeInterval = 15 * 60,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.credentialProvider = credentialProvider
         self.authenticationFailureHandler = authenticationFailureHandler
         self.session = session
         self.manualRefreshCooldown = manualRefreshCooldown
+        self.cacheLifetime = cacheLifetime
+        self.now = now
     }
 
     func popularVideos(regionCode: String = "JP", forceRefresh: Bool = false) async throws -> [VideoSummary] {
@@ -229,7 +234,7 @@ actor YouTubeDataClient: YouTubeCatalogServing {
         forceRefresh: Bool,
         loader: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let now = Date()
+        let now = now()
         if forceRefresh, let entry = cache[key],
            now.timeIntervalSince(entry.date) < manualRefreshCooldown,
            let value = try? JSONDecoder.youtube.decode(T.self, from: entry.data) {
@@ -282,7 +287,7 @@ actor YouTubeDataClient: YouTubeCatalogServing {
             }
             if inFlight[key]?.id == request.id {
                 inFlight[key] = nil
-                cache[key] = CacheEntry(date: .now, data: data)
+                cache[key] = CacheEntry(date: now(), data: data)
             }
             return try JSONDecoder.youtube.decode(T.self, from: data)
         } catch {
@@ -339,7 +344,9 @@ actor YouTubeDataClient: YouTubeCatalogServing {
                 await authenticationFailureHandler()
                 throw CatalogError.authenticationRequired
             }
-            if http.statusCode == 403 { throw CatalogError.quotaOrPermission(detail) }
+            if http.statusCode == 403 || http.statusCode == 429 {
+                throw CatalogError.quotaOrPermission(detail)
+            }
             throw CatalogError.server(detail)
         }
         do {
