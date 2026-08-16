@@ -10,6 +10,8 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private let transport: any WatchConnectivityTransport
     private let snapshots: any WatchTransferSnapshotStoring
     private let inventoryCursorStore: any WatchInventoryCursorStoring
+    private let inventoryRequestStore: any WatchInventoryRequestStoring
+    private let makeInventoryRequest: @MainActor () -> WatchInventoryRequest
     private let automaticRetryDelays: [Duration]
     private let confirmationTimeout: TimeInterval
     private var activeTransferID: UUID?
@@ -18,6 +20,8 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private var confirmationTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var hasStarted = false
     private var sessionStartedTransferIDs: Set<UUID> = []
+    private var pendingInventoryRequest: WatchInventoryRequest?
+    private var publishedInventoryRequestID: UUID?
 
     private(set) var connectionStatus: WatchConnectionStatus
     private(set) var liveProgress: [String: Double] = [:]
@@ -29,6 +33,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         transport: any WatchConnectivityTransport,
         snapshots: any WatchTransferSnapshotStoring,
         inventoryCursorStore: any WatchInventoryCursorStoring = UserDefaultsWatchInventoryCursorStore(),
+        inventoryRequestStore: any WatchInventoryRequestStoring = UserDefaultsWatchInventoryRequestStore(),
+        makeInventoryRequest: @escaping @MainActor () -> WatchInventoryRequest = {
+            WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        },
         automaticRetryDelays: [Duration] = [.seconds(2), .seconds(10)],
         confirmationTimeout: TimeInterval = 30 * 60
     ) {
@@ -37,9 +45,12 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         self.transport = transport
         self.snapshots = snapshots
         self.inventoryCursorStore = inventoryCursorStore
+        self.inventoryRequestStore = inventoryRequestStore
+        self.makeInventoryRequest = makeInventoryRequest
         self.automaticRetryDelays = automaticRetryDelays
         self.confirmationTimeout = confirmationTimeout
         connectionStatus = transport.status
+        pendingInventoryRequest = inventoryRequestStore.load()
     }
 
     func start() {
@@ -52,7 +63,18 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     }
 
     func refreshState() {
+        if pendingInventoryRequest == nil {
+            let request = makeInventoryRequest()
+            do {
+                try inventoryRequestStore.save(request)
+                pendingInventoryRequest = request
+            } catch {
+                lastPersistenceError = error.localizedDescription
+                return
+            }
+        }
         transport.activate()
+        publishPendingInventoryRequestIfPossible()
     }
 
     func enqueue(_ source: WatchTransferSource) async throws {
@@ -277,6 +299,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             // didFinish callback could hold the serial queue forever.
             sessionStartedTransferIDs.removeAll()
             if status.canTransfer {
+                publishPendingInventoryRequestIfPossible()
                 resendPendingDeletionCommands()
                 Task { @MainActor [weak self] in
                     await self?.reconcileAndResumeTransfers()
@@ -508,6 +531,17 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             return
         }
 
+        if let requestID = inventory.respondingToRequestID,
+           requestID == pendingInventoryRequest?.requestID {
+            do {
+                try inventoryRequestStore.clear()
+                pendingInventoryRequest = nil
+                publishedInventoryRequestID = nil
+            } catch {
+                lastPersistenceError = error.localizedDescription
+            }
+        }
+
         for record in records where record.state == .removedFromWatch {
             let transferID = record.transferID
             Task { await snapshots.removeTransfer(transferID) }
@@ -527,6 +561,18 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.updatedAt = .now
         }
         _ = persistChanges()
+    }
+
+    private func publishPendingInventoryRequestIfPossible() {
+        guard connectionStatus.canTransfer,
+              let request = pendingInventoryRequest,
+              publishedInventoryRequestID != request.requestID else { return }
+        do {
+            try transport.requestInventory(request)
+            publishedInventoryRequestID = request.requestID
+        } catch {
+            lastPersistenceError = error.localizedDescription
+        }
     }
 
     private func sendDeletionCommand(for record: WatchTransferRecord) throws {
@@ -1011,6 +1057,38 @@ struct WatchInventoryCursor: Codable, Equatable, Sendable {
 protocol WatchInventoryCursorStoring: AnyObject {
     func load() -> WatchInventoryCursor?
     func save(_ cursor: WatchInventoryCursor) throws
+}
+
+@MainActor
+protocol WatchInventoryRequestStoring: AnyObject {
+    func load() -> WatchInventoryRequest?
+    func save(_ request: WatchInventoryRequest) throws
+    func clear() throws
+}
+
+@MainActor
+final class UserDefaultsWatchInventoryRequestStore: WatchInventoryRequestStoring {
+    private static let key = "com.rimtty.YouTubePod.pendingWatchInventoryRequest"
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func load() -> WatchInventoryRequest? {
+        guard let data = defaults.data(forKey: Self.key) else { return nil }
+        return try? JSONDecoder()
+            .decode(WatchInventoryRequest.self, from: data)
+            .validated()
+    }
+
+    func save(_ request: WatchInventoryRequest) throws {
+        defaults.set(try JSONEncoder().encode(request.validated()), forKey: Self.key)
+    }
+
+    func clear() throws {
+        defaults.removeObject(forKey: Self.key)
+    }
 }
 
 @MainActor

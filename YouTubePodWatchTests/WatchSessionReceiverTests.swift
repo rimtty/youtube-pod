@@ -43,6 +43,22 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
     }
 
+    func testEachSynchronizationPassRereadsRequestAndPublishesCorrelation() async throws {
+        let fixture = try makeFixture()
+        let first = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        let second = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        fixture.peer.inventoryRequest = first
+
+        await fixture.receiver.synchronizeNow()
+
+        XCTAssertEqual(fixture.peer.inventories.last?.respondingToRequestID, first.requestID)
+
+        fixture.peer.inventoryRequest = second
+        await fixture.receiver.synchronizeNow()
+
+        XCTAssertEqual(fixture.peer.inventories.last?.respondingToRequestID, second.requestID)
+    }
+
     func testSuccessfulAudioImportInvalidatesStalePlaybackQueueEntry() async throws {
         var invalidatedVideoIDs: [String] = []
         let fixture = try makeFixture(
@@ -427,7 +443,6 @@ final class WatchSessionReceiverTests: XCTestCase {
             stager: stager,
             library: service,
             peer: peer,
-            availableCapacity: { 123_456 },
             invalidatePlaybackItem: invalidatePlaybackItem
         )
         return ReceiverFixture(
@@ -624,6 +639,7 @@ private struct SelectiveReceiverCapacityChecker: WatchCapacityChecking {
 private final class ReceiverPeerStub: WatchPeerSyncing {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
+    var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
     var hasContentPending = false
 
@@ -637,6 +653,7 @@ private final class ReceiverPeerStub: WatchPeerSyncing {
     private(set) var contentDrainWaitCount = 0
     private(set) var acknowledgements: [WatchTransferAcknowledgement] = []
     private(set) var inventories: [WatchInventorySnapshot] = []
+    var inventoryRequest: WatchInventoryRequest?
 
     func activate() {
         activationCount += 1
@@ -663,6 +680,10 @@ private final class ReceiverPeerStub: WatchPeerSyncing {
 
     func publishInventory(_ inventory: WatchInventorySnapshot) throws {
         inventories.append(inventory)
+    }
+
+    func currentInventoryRequest() -> WatchInventoryRequest? {
+        inventoryRequest
     }
 
     func emitActivation() {

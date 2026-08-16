@@ -43,6 +43,7 @@ protocol PhoneWCSessionDriving: AnyObject {
         metadata: [String: Any]
     ) throws -> any PhoneWCSessionFileTransferDriving
     func transferUserInfo(_ userInfo: [String: Any]) throws
+    func updateApplicationContext(_ applicationContext: [String: Any]) throws
 }
 
 @MainActor
@@ -87,6 +88,11 @@ final class ApplePhoneWCSessionDriver: PhoneWCSessionDriving {
     func transferUserInfo(_ userInfo: [String: Any]) throws {
         guard let session else { throw WatchConnectivityAdapterError.unsupported }
         session.transferUserInfo(userInfo)
+    }
+
+    func updateApplicationContext(_ applicationContext: [String: Any]) throws {
+        guard let session else { throw WatchConnectivityAdapterError.unsupported }
+        try session.updateApplicationContext(applicationContext)
     }
 }
 

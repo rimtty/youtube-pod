@@ -5,6 +5,7 @@ import Foundation
 protocol WatchPeerSyncing: AnyObject {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)? { get set }
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)? { get set }
+    var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)? { get set }
     var activationHandler: (@MainActor @Sendable () -> Void)? { get set }
     var hasContentPending: Bool { get }
 
@@ -13,6 +14,7 @@ protocol WatchPeerSyncing: AnyObject {
     func waitUntilContentDrained() async throws
     func enqueueAcknowledgement(_ acknowledgement: WatchTransferAcknowledgement) throws
     func publishInventory(_ inventory: WatchInventorySnapshot) throws
+    func currentInventoryRequest() -> WatchInventoryRequest?
 }
 
 struct WatchConnectivityWaitPolicy: Equatable, Sendable {
@@ -43,6 +45,7 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
 
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
+    var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
 
     init(
@@ -138,6 +141,12 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
         }
         try driver.updateApplicationContext(inventory.applicationContext())
     }
+
+    func currentInventoryRequest() -> WatchInventoryRequest? {
+        try? WatchInventoryRequest.decode(
+            applicationContext: driver.receivedApplicationContext
+        )
+    }
 }
 
 extension WatchWCSessionPeerSyncService: WCSessionDelegate {
@@ -198,6 +207,33 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
         if let failureUserInfo = handleReceivedUserInfo(userInfo) {
             session.transferUserInfo(failureUserInfo)
         }
+    }
+
+    nonisolated func session(
+        _ session: WCSession,
+        didReceiveApplicationContext applicationContext: [String: Any]
+    ) {
+        handleReceivedApplicationContext(applicationContext)
+    }
+
+    /// Normalized callback core used by both the Apple delegate and tests.
+    /// Synchronization never relies solely on this notification: every pass
+    /// also rereads WCSession.receivedApplicationContext.
+    nonisolated func handleReceivedApplicationContext(
+        _ applicationContext: [String: Any]
+    ) {
+        guard let request = Self.normalizedInventoryRequest(
+            applicationContext: applicationContext
+        ) else { return }
+        Task { @MainActor [weak self] in
+            self?.inventoryRequestHandler?(request)
+        }
+    }
+
+    nonisolated static func normalizedInventoryRequest(
+        applicationContext: [String: Any]
+    ) -> WatchInventoryRequest? {
+        try? WatchInventoryRequest.decode(applicationContext: applicationContext)
     }
 
     /// Persists a deletion command before the delegate callback returns.

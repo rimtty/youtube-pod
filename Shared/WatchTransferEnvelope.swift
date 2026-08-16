@@ -235,6 +235,61 @@ struct WatchInventoryEntry: Codable, Equatable, Sendable {
     let fileSize: Int64
 }
 
+/// Latest-wins request for a freshly generated Watch inventory snapshot.
+///
+/// iPhone publishes this through its application context. The request ID lets
+/// iPhone distinguish a response generated for the current refresh from a
+/// cached inventory replayed while WCSession activates.
+struct WatchInventoryRequest: Codable, Equatable, Sendable {
+    static let applicationContextKey = "com.rimtty.YouTubePod.watchInventoryRequest"
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let requestedAt: Date
+
+    init(
+        schemaVersion: Int = WatchTransferEnvelope.currentSchemaVersion,
+        requestID: UUID,
+        requestedAt: Date
+    ) {
+        self.schemaVersion = schemaVersion
+        self.requestID = requestID
+        self.requestedAt = requestedAt
+    }
+
+    func validated() throws -> Self {
+        guard schemaVersion == WatchTransferEnvelope.currentSchemaVersion else {
+            throw WatchTransferProtocolError.unsupportedSchema(schemaVersion)
+        }
+        guard requestID != UUID.nil else {
+            throw WatchTransferProtocolError.invalidTransferID
+        }
+        return self
+    }
+
+    func applicationContext() throws -> [String: Any] {
+        _ = try validated()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        return [Self.applicationContextKey: try encoder.encode(self)]
+    }
+
+    static func decode(applicationContext: [String: Any]) throws -> Self {
+        guard let payload = applicationContext[applicationContextKey] as? Data else {
+            throw WatchTransferProtocolError.missingEnvelope
+        }
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .millisecondsSince1970
+            return try decoder.decode(Self.self, from: payload).validated()
+        } catch let error as WatchTransferProtocolError {
+            throw error
+        } catch {
+            throw WatchTransferProtocolError.malformedPayload
+        }
+    }
+}
+
 struct WatchInventorySnapshot: Codable, Equatable, Sendable {
     static let applicationContextKey = "com.rimtty.YouTubePod.watchInventory"
 
@@ -243,6 +298,7 @@ struct WatchInventorySnapshot: Codable, Equatable, Sendable {
     let generation: Int64
     let generatedAt: Date
     let availableCapacity: Int64?
+    let respondingToRequestID: UUID?
     let entries: [WatchInventoryEntry]
 
     init(
@@ -251,6 +307,7 @@ struct WatchInventorySnapshot: Codable, Equatable, Sendable {
         generation: Int64,
         generatedAt: Date,
         availableCapacity: Int64?,
+        respondingToRequestID: UUID? = nil,
         entries: [WatchInventoryEntry]
     ) {
         self.schemaVersion = schemaVersion
@@ -258,6 +315,7 @@ struct WatchInventorySnapshot: Codable, Equatable, Sendable {
         self.generation = generation
         self.generatedAt = generatedAt
         self.availableCapacity = availableCapacity
+        self.respondingToRequestID = respondingToRequestID
         self.entries = entries
     }
 
@@ -270,6 +328,9 @@ struct WatchInventorySnapshot: Codable, Equatable, Sendable {
         }
         if let availableCapacity, availableCapacity < 0 {
             throw WatchTransferProtocolError.invalidFileSize
+        }
+        if let respondingToRequestID, respondingToRequestID == UUID.nil {
+            throw WatchTransferProtocolError.invalidTransferID
         }
         for entry in entries {
             try validateYouTubeID(entry.youtubeID)

@@ -294,6 +294,47 @@ struct WatchPeerSyncServiceTests {
     }
 
     @Test @MainActor
+    func currentInventoryRequestRereadsDriverApplicationContext() throws {
+        let fixture = try makeFixture(isActivated: true)
+        let first = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let second = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        fixture.driver.receivedApplicationContext = try first.applicationContext()
+
+        #expect(fixture.service.currentInventoryRequest() == first)
+
+        fixture.driver.receivedApplicationContext = try second.applicationContext()
+        #expect(fixture.service.currentInventoryRequest() == second)
+    }
+
+    @Test @MainActor
+    func applicationContextCallbackNormalizesRequestAndNotifiesHandler() async throws {
+        let fixture = try makeFixture()
+        let recorder = PeerCallbackRecorder()
+        fixture.service.inventoryRequestHandler = { request in
+            recorder.inventoryRequests.append(request)
+        }
+        let request = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        fixture.service.handleReceivedApplicationContext(try request.applicationContext())
+        fixture.service.handleReceivedApplicationContext(["malformed": Data()])
+        await Task.yield()
+
+        #expect(recorder.inventoryRequests == [request])
+        #expect(WatchWCSessionPeerSyncService.normalizedInventoryRequest(
+            applicationContext: [:]
+        ) == nil)
+    }
+
+    @Test @MainActor
     func outboundDeliveryRequiresActivatedSession() throws {
         let fixture = try makeFixture(isActivated: false)
         let acknowledgement = WatchTransferAcknowledgement(
@@ -561,6 +602,7 @@ private final class WatchWCSessionDriverStub: WatchWCSessionDriving {
     var isSupported: Bool
     var isActivated: Bool
     var hasContentPending: Bool
+    var receivedApplicationContext: [String: Any] = [:]
     private(set) weak var installedDelegate: (any WCSessionDelegate)?
     private(set) var activationCount = 0
     private(set) var delayCallCount = 0
@@ -615,6 +657,7 @@ private final class PeerCallbackRecorder {
     var activationCount = 0
     var stagedFiles: [StagedWatchTransferFile] = []
     var commands: [StagedWatchLibraryCommand] = []
+    var inventoryRequests: [WatchInventoryRequest] = []
 }
 
 private enum TestDriverError: Error, Equatable {

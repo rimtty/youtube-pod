@@ -36,8 +36,9 @@ iPhoneに保存済みのM4Aを`WatchConnectivity`で転送し、Watchアプリ�
 - Watchアプリのローカルライブラリ、音声プレイヤー、受信ステージング、検証、ACK outbox、inventory、削除commandを実装済み
 - iPhoneライブラリにWatch転送／キャンセル／再試行／削除操作を追加し、ライブラリ右側にWatch管理タブを実装済み
 - Watch inventoryはiPhoneで永続cursorと照合し、古いinstance／generation、identity不一致、サイズ不一致、遅延ACKによる状態復活を拒否する
+- iPhoneの手動再同期はrequest IDを送信前に永続化したlatest-wins application contextで要求し、Watchは各同期passでcurrent contextを再読して相関付きfresh inventoryを返す
 - Google未ログイン時も、iPhoneの保存済みライブラリとWatch管理タブだけを利用できる
-- Simulatorの自動回帰はiOS 142件（ネットワーク4件スキップ）とWatch 115件が成功
+- Simulatorの自動回帰はiOS 149件（ネットワーク4件スキップ）とWatch 120件が成功
 - WatchConnectivityの実配送、長尺転送、Bluetooth音声、画面消灯後の再生はペアリング済み実機で未検証
 
 ## 全体構成
@@ -201,7 +202,6 @@ Watchタブには次を表示する。
 - Watch保存済み一覧
 - キャンセル、再試行、Watchから削除
 - 最終同期日時と再同期
-- Watchから最後に通知された空き容量と取得時刻
 
 Google認証失敗時のオフラインモードでも、ローカルライブラリとWatch管理は利用可能にする。
 
@@ -362,7 +362,7 @@ WatchConnectivityのファイル受信はSimulatorでは最終検証できない
 
 - 配送時刻はOS管理であり、即時転送を保証できない
 - 現行実機サンプルには約65MBの長尺M4Aがあり、転送時間とWatch容量の実測が必要
-- Watch側の空き容量通知は古い可能性があるため、受信時の再確認が必須
+- Watchの空き容量は音声取込直前にWatch内だけで確認し、Required Reason API E174.1の用途に限定して取得値をinventoryやiPhoneへ自動送信しない
 - 音声ルートが利用できない場合、再生開始に失敗する
 - 複数WatchのAuto Switchで、iPhone側の「転送済み」状態が現在のWatchと一致しなくなる
 - SwiftDataモデル追加前にmigrationを整備しないと、既存ライブラリを失うリスクがある

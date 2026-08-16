@@ -37,6 +37,7 @@ final class WCSessionAdapterTests: XCTestCase {
         driver.installDelegate(nil)
         driver.activate()
         XCTAssertThrowsError(try driver.transferUserInfo([:]))
+        XCTAssertThrowsError(try driver.updateApplicationContext([:]))
         XCTAssertThrowsError(try driver.transferFile(
             URL(fileURLWithPath: "/tmp/audio.m4a"),
             metadata: [:]
@@ -195,6 +196,33 @@ final class WCSessionAdapterTests: XCTestCase {
 
         driver.activationState = .inactive
         XCTAssertThrowsError(try adapter.sendDeletionCommand(command)) { error in
+            guard case WatchConnectivityAdapterError.unavailable = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testInventoryRequestUsesLatestApplicationContextWithoutTouchingDeletionQueue() throws {
+        let driver = activatedDriver()
+        let adapter = WCSessionAdapter(driver: driver)
+        let request = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        try adapter.requestInventory(request)
+
+        XCTAssertEqual(driver.applicationContexts.count, 1)
+        XCTAssertEqual(
+            try WatchInventoryRequest.decode(
+                applicationContext: XCTUnwrap(driver.applicationContexts.first)
+            ),
+            request
+        )
+        XCTAssertTrue(driver.userInfos.isEmpty)
+
+        driver.activationState = .inactive
+        XCTAssertThrowsError(try adapter.requestInventory(request)) { error in
             guard case WatchConnectivityAdapterError.unavailable = error else {
                 return XCTFail("Unexpected error: \(error)")
             }
@@ -396,6 +424,7 @@ private final class PhoneWCSessionDriverStub: PhoneWCSessionDriving {
         transfer: PhoneWCFileTransferDriverStub
     )] = []
     private(set) var userInfos: [[String: Any]] = []
+    private(set) var applicationContexts: [[String: Any]] = []
 
     var isPaired: Bool {
         pairedReadCount += 1
@@ -442,6 +471,10 @@ private final class PhoneWCSessionDriverStub: PhoneWCSessionDriving {
 
     func transferUserInfo(_ userInfo: [String: Any]) throws {
         userInfos.append(userInfo)
+    }
+
+    func updateApplicationContext(_ applicationContext: [String: Any]) throws {
+        applicationContexts.append(applicationContext)
     }
 }
 

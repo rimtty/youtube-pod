@@ -11,7 +11,7 @@
 ## 現在の自動検証結果（2026-08-16）
 
 - Xcode 27.0 / Apple Swift 6.4 / iOS 27.0 Simulator
-- Debug全テスト: 142件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
+- Debug全テスト: 149件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
 - 通常公開動画、Shorts、30分超の公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
 - 長尺取得の途中キャンセル、追加リトライ、起動時の残存一時フォルダ清掃を確認
 - `yt-dlp-ejs 0.8.0`を固定同梱し、実行時ダウンロードなしでWebKit JavaScriptチャレンジ処理を確認
@@ -31,11 +31,13 @@
 - 保存済み音声の削除後にダウンロード完了表示を破棄し、キュー末尾操作でも再生履歴を0秒で上書きしないことを確認
 - 起動時に中断された隠しステージングM4Aも孤児ファイルとして清掃することを確認
 - watchOS 27 / Apple Watch Series 9（41mm／45mm）Simulator: Watchアプリのビルドと回帰テストに成功
-- Watch側回帰テスト: 115件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
+- Watch側回帰テスト: 120件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認
 - WCSession callback URLを同期退避し、payload＋sidecar完成後のatomic rename、rename直前終了からの復旧、破損receiptの隔離を確認
 - WatchConnectivityの実delegate bridgeをdriverから分離し、callback復帰前のfile／削除command退避、activation、ACK／inventory送信、非active拒否を確認
 - iPhoneのWCSession bridgeもApple final型をdriverへ隔離し、activation、送信、進捗、キャンセル、ACK／inventory callbackを決定的なstubで確認
+- iPhoneの「状態を再確認」はrequest IDをUserDefaultsへ送信前に保存し、latest-winsのapplication contextで連打と再起動を同じ要求へ集約することを確認
+- Watchはinventory要求callbackだけに依存せず各同期passでcurrent application contextを再読し、iPhoneは受理済みのmatching responseだけでpending要求を完了することを確認
 - watchOSのWatch Connectivity background taskを、bounded activation／content drainと共有同期Taskで完了まで保持し、追加receipt、timeout、cancel、次回wake再試行を確認
 - 音声trackあり／動画trackなし／M4A／宣言サイズをAVFoundationで検証し、容量不足を構造化エラーへ分類
 - Watch SwiftDataへの取込はreceiptをcommit完了まで保持し、保存失敗・プロセス終了窓でも旧音声と再試行payloadを失わないことを確認
@@ -62,6 +64,7 @@
 - inventory不一致後は、iPhoneの元音声から新しいsnapshot／revisionを作る再転送で復旧し、元音声がない場合は再転送を案内しない
 - iPhoneライブラリの44pt Watch転送操作、進捗／キャンセル／再試行／削除、独立したWatch管理タブ、Google未ログイン時のライブラリ＋Watch導線を実装
 - iPhone／Watch各バンドルへRequired Reason APIのPrivacy Manifestを同梱し、Disk Space、UserDefaults、File Timestampの宣言を自動検証
+- Disk Space APIはWatch内の音声取込直前のローカル容量判定だけに使い、E174.1の用途に限定して取得値をinventoryへ含めずiPhoneへ自動送信しない
 - CIでiOS static analyzerとApple Watch Series 9（41mm／45mm）の両サイズを検証
 
 `./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はwatchOS 27のApple Watch Series 9（41mm／45mm）Simulatorを必要に応じて作成し、両サイズで回帰テストを実行する。各スクリプトはビルド成果物内のPrivacy Manifestも検証する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
@@ -83,7 +86,8 @@
 - [ ] Watchの容量不足時に既存ライブラリが壊れない
 - [ ] Watchから削除後に音声、画像、SwiftDataがすべて消える
 - [ ] iPhoneの元音声を削除してもWatch側コピーを再生できる
-- [ ] iPhoneのWatchタブで件数、空き容量、最終同期時刻が実機Watchの状態と一致する
+- [ ] iPhoneの「状態を再確認」でfresh inventory responseを受信し、件数と最終同期時刻が実機Watchの状態と一致する
+- [ ] Watchアプリが前面にない状態、オフライン復帰、iPhone／Watch再起動後も同じrequest IDの要求が完了する
 - [ ] Watchへの転送、キャンセル、再試行、Watchから削除がiPhoneの管理タブへ正しく反映される
 - [ ] Google未ログイン／iPhone機内モードでも、iPhoneのWatch管理タブとWatchのローカル再生を利用できる
 

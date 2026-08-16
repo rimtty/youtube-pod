@@ -738,15 +738,162 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(fixture.service.latestInventory, current)
     }
 
-    func testRefreshStateReactivatesTransportWithoutCreatingTransfers() throws {
-        let fixture = try makeFixture(start: false)
+    func testRefreshStatePersistsThenPublishesOneLatestWinsRequest() throws {
+        let request = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let requestStore = WatchInventoryRequestStoreStub()
+        let fixture = try makeFixture(
+            start: false,
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: { request }
+        )
         fixture.service.start()
         XCTAssertEqual(fixture.transport.activationCount, 1)
+        fixture.transport.onInventoryRequest = { sent in
+            XCTAssertEqual(requestStore.request, sent)
+        }
+
+        fixture.service.refreshState()
+        fixture.service.refreshState()
+
+        XCTAssertEqual(fixture.transport.activationCount, 3)
+        XCTAssertTrue(fixture.transport.sent.isEmpty)
+        XCTAssertEqual(fixture.transport.inventoryRequests, [request])
+        XCTAssertEqual(requestStore.saveCount, 1)
+    }
+
+    func testPendingRequestSurvivesServiceRecreationWithSameIdentity() throws {
+        let request = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let requestStore = WatchInventoryRequestStoreStub()
+        let first = try makeFixture(
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: { request }
+        )
+        first.service.refreshState()
+        XCTAssertEqual(first.transport.inventoryRequests, [request])
+
+        let recreated = try makeFixture(
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: {
+                WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+            }
+        )
+
+        XCTAssertEqual(recreated.transport.inventoryRequests, [request])
+        XCTAssertEqual(requestStore.saveCount, 1)
+    }
+
+    func testOnlyAcceptedMatchingInventoryClearsPendingRequest() throws {
+        let request = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        let requestStore = WatchInventoryRequestStoreStub()
+        let fixture = try makeFixture(
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: { request }
+        )
+        fixture.service.refreshState()
+        let instanceID = UUID()
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: instanceID,
+            generation: 2,
+            generatedAt: Date(timeIntervalSince1970: 200),
+            entries: []
+        )))
+        XCTAssertEqual(requestStore.request, request)
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: instanceID,
+            generation: 1,
+            generatedAt: Date(timeIntervalSince1970: 300),
+            entries: [],
+            respondingToRequestID: request.requestID
+        )))
+        XCTAssertEqual(requestStore.request, request, "stale correlated inventory must not complete refresh")
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: instanceID,
+            generation: 2,
+            generatedAt: Date(timeIntervalSince1970: 301),
+            entries: [],
+            respondingToRequestID: request.requestID
+        )))
+        XCTAssertNil(requestStore.request)
+        XCTAssertEqual(requestStore.clearCount, 1)
+    }
+
+    func testRequestStoreFailurePreventsPublication() throws {
+        let requestStore = WatchInventoryRequestStoreStub()
+        requestStore.saveError = WatchTransportStubError.sendFailed
+        let fixture = try makeFixture(
+            inventoryRequestStore: requestStore
+        )
 
         fixture.service.refreshState()
 
-        XCTAssertEqual(fixture.transport.activationCount, 2)
-        XCTAssertTrue(fixture.transport.sent.isEmpty)
+        XCTAssertTrue(fixture.transport.inventoryRequests.isEmpty)
+        XCTAssertNotNil(fixture.service.lastPersistenceError)
+    }
+
+    func testApplicationContextFailureKeepsDurableRequestAndRetriesSameID() throws {
+        let request = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        let requestStore = WatchInventoryRequestStoreStub()
+        let fixture = try makeFixture(
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: { request }
+        )
+        fixture.transport.inventoryRequestError = WatchTransportStubError.sendFailed
+
+        fixture.service.refreshState()
+
+        XCTAssertEqual(requestStore.request, request)
+        XCTAssertTrue(fixture.transport.inventoryRequests.isEmpty)
+
+        fixture.transport.inventoryRequestError = nil
+        fixture.transport.emit(.statusChanged(fixture.transport.status))
+        XCTAssertEqual(fixture.transport.inventoryRequests, [request])
+    }
+
+    func testCursorPersistenceFailureDoesNotClearMatchingRequest() throws {
+        let request = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        let requestStore = WatchInventoryRequestStoreStub()
+        let cursorStore = WatchInventoryCursorStoreStub()
+        cursorStore.saveError = WatchTransportStubError.sendFailed
+        let fixture = try makeFixture(
+            inventoryCursorStore: cursorStore,
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: { request }
+        )
+        fixture.service.refreshState()
+
+        fixture.transport.emit(.inventory(inventory(
+            instanceID: UUID(),
+            generation: 1,
+            generatedAt: .now,
+            entries: [],
+            respondingToRequestID: request.requestID
+        )))
+
+        XCTAssertEqual(requestStore.request, request)
+        XCTAssertEqual(requestStore.clearCount, 0)
+    }
+
+    func testUserDefaultsRequestStoreSurvivesRecreationAndClears() throws {
+        let suite = "PhoneWatchTransferServiceTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let request = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+
+        try UserDefaultsWatchInventoryRequestStore(defaults: defaults).save(request)
+        let recreated = UserDefaultsWatchInventoryRequestStore(defaults: defaults)
+
+        XCTAssertEqual(recreated.load(), request)
+        try recreated.clear()
+        XCTAssertNil(recreated.load())
     }
 
     func testMissingInventoryEntryNeverMarksAvailableRecordRemoved() throws {
@@ -1031,7 +1178,11 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         cloneDelay: Duration? = nil,
         confirmationTimeout: TimeInterval = 30 * 60,
         start: Bool = true,
-        inventoryCursorStore: WatchInventoryCursorStoreStub = WatchInventoryCursorStoreStub()
+        inventoryCursorStore: WatchInventoryCursorStoreStub = WatchInventoryCursorStoreStub(),
+        inventoryRequestStore: WatchInventoryRequestStoreStub = WatchInventoryRequestStoreStub(),
+        makeInventoryRequest: @escaping @MainActor () -> WatchInventoryRequest = {
+            WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
+        }
     ) throws -> Fixture {
         let container = try ModelContainer(
             for: SavedAudio.self,
@@ -1045,6 +1196,8 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             transport: transport,
             snapshots: snapshots,
             inventoryCursorStore: inventoryCursorStore,
+            inventoryRequestStore: inventoryRequestStore,
+            makeInventoryRequest: makeInventoryRequest,
             automaticRetryDelays: automaticRetryDelays,
             confirmationTimeout: confirmationTimeout
         )
@@ -1055,6 +1208,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             transport: transport,
             snapshots: snapshots,
             inventoryCursorStore: inventoryCursorStore,
+            inventoryRequestStore: inventoryRequestStore,
             service: service
         )
     }
@@ -1091,13 +1245,15 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         instanceID: UUID,
         generation: Int64,
         generatedAt: Date,
-        entries: [WatchInventoryEntry]
+        entries: [WatchInventoryEntry],
+        respondingToRequestID: UUID? = nil
     ) -> WatchInventorySnapshot {
         WatchInventorySnapshot(
             libraryInstanceID: instanceID,
             generation: generation,
             generatedAt: generatedAt,
             availableCapacity: 123_456,
+            respondingToRequestID: respondingToRequestID,
             entries: entries
         )
     }
@@ -1168,6 +1324,7 @@ private struct Fixture {
     let transport: WatchTransportStub
     let snapshots: WatchSnapshotStoreStub
     let inventoryCursorStore: WatchInventoryCursorStoreStub
+    let inventoryRequestStore: WatchInventoryRequestStoreStub
     let service: PhoneWatchTransferService
 }
 
@@ -1178,6 +1335,9 @@ private final class WatchTransportStub: WatchConnectivityTransport {
     private(set) var sent: [(url: URL, envelope: WatchTransferEnvelope)] = []
     private(set) var cancelledTransferIDs: [UUID] = []
     private(set) var deletionCommands: [WatchLibraryCommand] = []
+    private(set) var inventoryRequests: [WatchInventoryRequest] = []
+    var onInventoryRequest: ((WatchInventoryRequest) -> Void)?
+    var inventoryRequestError: (any Error)?
     var deletionError: WatchTransportStubError?
     var enqueueFailureKinds: [WatchTransferFileKind] = []
     var outstanding: [OutstandingWatchFile] = []
@@ -1211,6 +1371,12 @@ private final class WatchTransportStub: WatchConnectivityTransport {
         deletionCommands.append(command)
     }
 
+    func requestInventory(_ request: WatchInventoryRequest) throws {
+        if let inventoryRequestError { throw inventoryRequestError }
+        onInventoryRequest?(request)
+        inventoryRequests.append(request)
+    }
+
     func cancelFiles(transferID: UUID) {
         cancelledTransferIDs.append(transferID)
     }
@@ -1238,11 +1404,36 @@ private enum WatchTransportStubError: LocalizedError {
 @MainActor
 private final class WatchInventoryCursorStoreStub: WatchInventoryCursorStoring {
     private(set) var cursor: WatchInventoryCursor?
+    var saveError: (any Error)?
 
     func load() -> WatchInventoryCursor? { cursor }
 
     func save(_ cursor: WatchInventoryCursor) throws {
+        if let saveError { throw saveError }
         self.cursor = cursor
+    }
+}
+
+@MainActor
+private final class WatchInventoryRequestStoreStub: WatchInventoryRequestStoring {
+    var request: WatchInventoryRequest?
+    var saveError: (any Error)?
+    var clearError: (any Error)?
+    private(set) var saveCount = 0
+    private(set) var clearCount = 0
+
+    func load() -> WatchInventoryRequest? { request }
+
+    func save(_ request: WatchInventoryRequest) throws {
+        if let saveError { throw saveError }
+        saveCount += 1
+        self.request = request
+    }
+
+    func clear() throws {
+        if let clearError { throw clearError }
+        clearCount += 1
+        request = nil
     }
 }
 
