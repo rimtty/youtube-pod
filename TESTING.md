@@ -11,7 +11,7 @@
 ## 現在の自動検証結果（2026-08-16）
 
 - Xcode 27.0 / Apple Swift 6.4 / iOS 27.0 Simulator
-- Debug全テスト: 127件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
+- Debug全テスト: 142件（うちネットワーク実動画4件は通常実行ではスキップ）、失敗0件
 - 通常公開動画、Shorts、30分超の公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
 - 長尺取得の途中キャンセル、追加リトライ、起動時の残存一時フォルダ清掃を確認
 - `yt-dlp-ejs 0.8.0`を固定同梱し、実行時ダウンロードなしでWebKit JavaScriptチャレンジ処理を確認
@@ -35,6 +35,7 @@
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認
 - WCSession callback URLを同期退避し、payload＋sidecar完成後のatomic rename、rename直前終了からの復旧、破損receiptの隔離を確認
 - WatchConnectivityの実delegate bridgeをdriverから分離し、callback復帰前のfile／削除command退避、activation、ACK／inventory送信、非active拒否を確認
+- iPhoneのWCSession bridgeもApple final型をdriverへ隔離し、activation、送信、進捗、キャンセル、ACK／inventory callbackを決定的なstubで確認
 - watchOSのWatch Connectivity background taskを、bounded activation／content drainと共有同期Taskで完了まで保持し、追加receipt、timeout、cancel、次回wake再試行を確認
 - 音声trackあり／動画trackなし／M4A／宣言サイズをAVFoundationで検証し、容量不足を構造化エラーへ分類
 - Watch SwiftDataへの取込はreceiptをcommit完了まで保持し、保存失敗・プロセス終了窓でも旧音声と再試行payloadを失わないことを確認
@@ -48,6 +49,7 @@
 - 音声ファイル欠落、AVPlayerItem失敗、音声セッション中断、出力経路切断、Now Playingとリモート操作の状態遷移を確認
 - Watchライブラリは16:9サムネイル、再生位置、受信中／同期失敗／再試行、再生不可状態、Dynamic Type、VoiceOver、Reduce Transparencyに対応
 - iPhone側Watch転送は、直列キュー、重複抑止、進捗、キャンセル、最大2回の自動再試行、stale ACK拒否、送信完了とWatch ACKの順序入替、再起動時照合をスタブで確認
+- `didFinish`失敗はWCErrorDomainとcodeを組み合わせ、一時的な配送失敗だけを自動再試行し、容量不足・未ペアリング・不正payloadなどの恒久失敗を手動対応へ分類することを確認
 - Watch転送の表示・永続進捗は音声を基準とし、小さいサムネイルが先に完了して100%表示にならないことを確認
 - 新しい転送／Watch ACKによる古い自動再試行の無効化、Watch取込確認タイムアウト、タイムアウト後の遅延ACK受理を確認
 - 自動再試行のsnapshot clone中に遅延ACKが届いても、確認済みrevisionを上書きしないことを確認

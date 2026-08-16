@@ -300,6 +300,28 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(fixture.transport.sent.count, 3)
     }
 
+    func testNonRetryableAudioFailureDoesNotScheduleAutomaticRetry() async throws {
+        let fixture = try makeFixture(automaticRetryDelays: [.zero, .zero])
+        let source = try makeSource(id: "terminal001", artwork: false)
+        try await fixture.service.enqueue(source)
+        let transfer = try XCTUnwrap(fixture.transport.sent.first?.envelope)
+
+        fixture.transport.emit(.fileFinished(
+            WatchTransferKey(transferID: transfer.transferID, fileKind: .audio),
+            WatchTransportFailure(
+                code: "WCErrorDomain.7015",
+                message: "insufficient space",
+                isRetryable: false
+            )
+        ))
+        try await Task.sleep(for: .milliseconds(50))
+
+        let record = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        XCTAssertEqual(record.state, .failed)
+        XCTAssertEqual(record.retryCount, 0)
+        XCTAssertEqual(fixture.transport.sent.count, 1)
+    }
+
     func testImportedAcknowledgementCancelsScheduledAutomaticRetry() async throws {
         let fixture = try makeFixture(automaticRetryDelays: [.milliseconds(150)])
         let source = try makeSource(id: "ackretry001", artwork: false)
