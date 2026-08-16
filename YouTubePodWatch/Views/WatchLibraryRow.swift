@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct WatchLibraryRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -12,95 +13,43 @@ struct WatchLibraryRow: View {
     let play: () -> Void
 
     var body: some View {
-        Button {
-            guard isPlayable else { return }
-            play()
-        } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    WatchArtwork(audio: audio)
-                        .frame(width: 52, height: 34)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(audio.title)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
-
-                        Text(audio.channelTitle)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.68))
-                            .lineLimit(1)
-
-                        HStack(spacing: 4) {
-                            if !isPlayable {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.yellow)
-                                    .accessibilityHidden(true)
-                                Text("利用できません")
-                            } else if isCurrent {
-                                Image(systemName: isPlaying ? "waveform" : "pause.fill")
-                                    .foregroundStyle(WatchPodPalette.lilac)
-                                    .symbolEffect(.variableColor.iterative, isActive: isPlaying)
-                                    .accessibilityHidden(true)
-                            }
-                            Text(durationText(audio.duration))
-                            if audio.hasBeenPlayed {
-                                Text("·")
-                                Text("\(Int((audio.playbackProgress * 100).rounded()))%")
-                            } else {
-                                Text("新着")
-                                    .foregroundStyle(WatchPodPalette.lilac)
-                            }
-                        }
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.62))
-                    }
+        Group {
+            if isPlayable {
+                Button(action: play) {
+                    rowContent
                 }
-
-                if audio.hasBeenPlayed || isCurrent {
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.white.opacity(0.14))
-                            Capsule()
-                                .fill(WatchPodPalette.brandGradient)
-                                .frame(width: proxy.size.width * progress)
-                        }
-                    }
-                    .frame(height: 3)
-                    .accessibilityHidden(true)
-                }
-            }
-            .padding(8)
-            .background(
-                reduceTransparency
-                    ? AnyShapeStyle(WatchPodPalette.deepTurquoise)
-                    : AnyShapeStyle(.thinMaterial),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(
-                        isCurrent ? WatchPodPalette.lilac.opacity(0.72) : .white.opacity(0.08),
-                        lineWidth: isCurrent ? 1.25 : 0.75
-                    )
+                .buttonStyle(.plain)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityHint(
+                    "ダブルタップして再生画面を開く。左にスワイプすると削除できます"
+                )
+            } else {
+                rowContent
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityLabel)
+                    .accessibilityHint("左にスワイプすると削除できます")
             }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint(
-            isPlayable
-                ? "ダブルタップして再生画面を開く。左にスワイプすると削除できます"
-                : "音声ファイルが見つかりません。左にスワイプすると削除できます"
-        )
     }
 
     private var progress: Double {
-        if isCurrent, audio.duration.isFinite, audio.duration > 0, currentTime.isFinite {
-            return min(max(currentTime / audio.duration, 0), 1)
-        }
-        return min(max(audio.playbackProgress, 0), 1)
+        WatchUIPresentation.playbackProgress(
+            duration: audio.duration,
+            persistedProgress: audio.playbackProgress,
+            isCurrent: isCurrent,
+            currentTime: currentTime
+        )
+    }
+
+    private var showsPlaybackProgress: Bool {
+        WatchUIPresentation.showsPlaybackProgress(
+            hasBeenPlayed: audio.hasBeenPlayed,
+            isCurrent: isCurrent
+        )
+    }
+
+    private var playbackPercentage: Int {
+        WatchUIPresentation.playbackPercentage(progress: progress)
     }
 
     private var accessibilityLabel: String {
@@ -109,8 +58,9 @@ struct WatchLibraryRow: View {
             parts.append("利用できません")
         } else if isCurrent {
             parts.append(isPlaying ? "再生中" : "一時停止中")
+            parts.append("\(playbackPercentage)パーセント再生済み")
         } else if audio.hasBeenPlayed {
-            parts.append("\(Int((progress * 100).rounded()))パーセント再生済み")
+            parts.append("\(playbackPercentage)パーセント再生済み")
         } else {
             parts.append("新着")
         }
@@ -119,6 +69,85 @@ struct WatchLibraryRow: View {
 
     private var isPlayable: Bool {
         watchPlayableAudioURL(for: audio) != nil
+    }
+
+    private var rowContent: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                WatchArtwork(audio: audio)
+                    .frame(width: 52, height: 34)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(audio.title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+
+                    Text(audio.channelTitle)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
+
+                    HStack(spacing: 4) {
+                        if !isPlayable {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.yellow)
+                                .accessibilityHidden(true)
+                            Text("利用できません")
+                        } else if isCurrent {
+                            Image(systemName: isPlaying ? "waveform" : "pause.fill")
+                                .foregroundStyle(WatchPodPalette.lilac)
+                                .symbolEffect(
+                                    .variableColor.iterative,
+                                    isActive: WatchUIPresentation.shouldAnimatePlaybackSymbol(
+                                        isPlaying: isPlaying,
+                                        reduceMotion: reduceMotion
+                                    )
+                                )
+                                .accessibilityHidden(true)
+                        }
+                        Text(durationText(audio.duration))
+                        if showsPlaybackProgress {
+                            Text("·")
+                            Text("\(playbackPercentage)%")
+                        } else {
+                            Text("新着")
+                                .foregroundStyle(WatchPodPalette.lilac)
+                        }
+                    }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.62))
+                }
+            }
+
+            if showsPlaybackProgress {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.14))
+                        Capsule()
+                            .fill(WatchPodPalette.brandGradient)
+                            .frame(width: proxy.size.width * progress)
+                    }
+                }
+                .frame(height: 3)
+                .accessibilityHidden(true)
+            }
+        }
+        .padding(8)
+        .background(
+            reduceTransparency
+                ? AnyShapeStyle(WatchPodPalette.deepTurquoise)
+                : AnyShapeStyle(.thinMaterial),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    isCurrent ? WatchPodPalette.lilac.opacity(0.72) : .white.opacity(0.08),
+                    lineWidth: isCurrent ? 1.25 : 0.75
+                )
+        }
     }
 }
 

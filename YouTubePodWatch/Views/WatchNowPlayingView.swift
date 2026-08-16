@@ -146,19 +146,17 @@ struct WatchNowPlayingView: View {
     }
 
     private func playbackErrorView(_ error: WatchAudioPlayerError) -> some View {
-        Label {
-            Text(
-                error == .audioRouteUnavailable
-                    ? "イヤホンの接続を確認してください"
-                    : "オーディオを開始できませんでした"
-            )
+        let presentation = WatchUIPresentation.playbackError(error)
+        return Label {
+            Text(presentation.message)
         } icon: {
-            Image(systemName: "airpodspro.chargingcase.wireless.fill")
+            Image(systemName: presentation.symbolName)
         }
         .font(.caption2)
         .foregroundStyle(.yellow)
         .multilineTextAlignment(.center)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(presentation.message)
     }
 
     private func control(
