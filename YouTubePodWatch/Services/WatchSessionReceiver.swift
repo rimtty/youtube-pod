@@ -51,6 +51,9 @@ final class WatchSessionReceiver {
         peer.commandHandler = { [weak self] _ in
             self?.requestSynchronization()
         }
+        peer.inventoryRequestHandler = { [weak self] _ in
+            self?.requestSynchronization()
+        }
         peer.activationHandler = { [weak self] in
             self?.requestSynchronization()
         }
@@ -201,8 +204,12 @@ final class WatchSessionReceiver {
             }
 
             guard flushAcknowledgements() else { return false }
+            let inventoryRequest = peer.currentInventoryRequest()
             try peer.publishInventory(
-                library.inventory(availableCapacity: availableCapacity())
+                library.inventory(
+                    availableCapacity: availableCapacity(),
+                    respondingToRequestID: inventoryRequest?.requestID
+                )
             )
             lastErrorMessage = nil
             return true

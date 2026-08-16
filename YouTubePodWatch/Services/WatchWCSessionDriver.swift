@@ -13,6 +13,7 @@ protocol WatchWCSessionDriving: AnyObject {
     var isSupported: Bool { get }
     var isActivated: Bool { get }
     var hasContentPending: Bool { get }
+    var receivedApplicationContext: [String: Any] { get }
 
     func installDelegate(_ delegate: (any WCSessionDelegate)?)
     func activate()
@@ -38,6 +39,10 @@ final class AppleWatchWCSessionDriver: WatchWCSessionDriving {
 
     var hasContentPending: Bool {
         session?.hasContentPending ?? false
+    }
+
+    var receivedApplicationContext: [String: Any] {
+        session?.receivedApplicationContext ?? [:]
     }
 
     func installDelegate(_ delegate: (any WCSessionDelegate)?) {

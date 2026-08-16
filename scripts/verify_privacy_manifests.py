@@ -14,7 +14,7 @@ EXPECTED = {
         "NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1"},
     },
     "watch": {
-        "NSPrivacyAccessedAPICategoryDiskSpace": {"85F4.1", "E174.1"},
+        "NSPrivacyAccessedAPICategoryDiskSpace": {"E174.1"},
         "NSPrivacyAccessedAPICategoryFileTimestamp": {"C617.1"},
     },
 }

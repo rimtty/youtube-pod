@@ -72,6 +72,12 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         try driver.transferUserInfo(command.userInfo())
     }
 
+    func requestInventory(_ request: WatchInventoryRequest) throws {
+        guard driver.isSupported else { throw WatchConnectivityAdapterError.unsupported }
+        guard status.canTransfer else { throw WatchConnectivityAdapterError.unavailable }
+        try driver.updateApplicationContext(request.applicationContext())
+    }
+
     func cancelFiles(transferID: UUID) {
         guard driver.isSupported else { return }
         for transfer in driver.outstandingFileTransfers {

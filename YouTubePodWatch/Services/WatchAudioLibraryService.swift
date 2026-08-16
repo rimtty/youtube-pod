@@ -168,7 +168,10 @@ final class WatchAudioLibraryService {
         }
     }
 
-    func inventory(availableCapacity: Int64?) throws -> WatchInventorySnapshot {
+    func inventory(
+        availableCapacity: Int64?,
+        respondingToRequestID: UUID? = nil
+    ) throws -> WatchInventorySnapshot {
         try createDirectoriesIfNeeded()
         let metadata = try metadata()
         if modelContext.hasChanges {
@@ -195,6 +198,7 @@ final class WatchAudioLibraryService {
             generation: metadata.generation,
             generatedAt: .now,
             availableCapacity: availableCapacity,
+            respondingToRequestID: respondingToRequestID,
             entries: entries
         ).validated()
     }

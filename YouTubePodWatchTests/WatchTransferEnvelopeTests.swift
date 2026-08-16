@@ -102,11 +102,13 @@ struct WatchTransferEnvelopeTests {
     }
 
     @Test func inventoryApplicationContextRoundTripPreservesIdentityAndGeneration() throws {
+        let requestID = UUID(uuidString: "2E81163C-7343-43C3-A86F-B3100246CD30")!
         let snapshot = WatchInventorySnapshot(
             libraryInstanceID: UUID(uuidString: "E6722C37-252A-4EBE-8722-18FCE42E9708")!,
             generation: 7,
             generatedAt: Date(timeIntervalSince1970: 1_700_000_100),
             availableCapacity: 1_000_000,
+            respondingToRequestID: requestID,
             entries: [WatchInventoryEntry(
                 youtubeID: "dQw4w9WgXcQ",
                 transferID: UUID(uuidString: "D725B720-D653-4B75-9D9E-772352ABF5C8")!,
@@ -120,6 +122,42 @@ struct WatchTransferEnvelopeTests {
         )
 
         #expect(decoded == snapshot)
+    }
+
+    @Test func inventoryRequestApplicationContextRoundTripPreservesIdentity() throws {
+        let request = WatchInventoryRequest(
+            requestID: UUID(uuidString: "2E81163C-7343-43C3-A86F-B3100246CD30")!,
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_200)
+        )
+
+        let decoded = try WatchInventoryRequest.decode(
+            applicationContext: request.applicationContext()
+        )
+
+        #expect(decoded == request)
+        #expect(throws: WatchTransferProtocolError.missingEnvelope) {
+            try WatchInventoryRequest.decode(applicationContext: [:])
+        }
+    }
+
+    @Test func inventoryWithoutResponseCorrelationRemainsDecodable() throws {
+        let legacyPayload = """
+        {
+          "schemaVersion": 1,
+          "libraryInstanceID": "E6722C37-252A-4EBE-8722-18FCE42E9708",
+          "generation": 7,
+          "generatedAt": 1700000100000,
+          "availableCapacity": 1000000,
+          "entries": []
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try WatchInventorySnapshot.decode(applicationContext: [
+            WatchInventorySnapshot.applicationContextKey: legacyPayload
+        ])
+
+        #expect(decoded.respondingToRequestID == nil)
+        #expect(decoded.generation == 7)
     }
 
     @Test func deletionCommandRoundTripPreservesRevision() throws {
