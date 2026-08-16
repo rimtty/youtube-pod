@@ -18,6 +18,7 @@
 		233530C72F9679D4A70EAF7C /* SubscriptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEC8820DB6F98C9905112D1 /* SubscriptionsView.swift */; };
 		258671AADEF9343C818246D9 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECBF84DBA1C1C2CBC63844AA /* HomeView.swift */; };
 		267277CF39523093EA184D28 /* WatchTransferRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70AD9BC35E4D93F03DB65200 /* WatchTransferRecord.swift */; };
+		29AC2C41367C099C2BD4B4BC /* PhoneWCSessionDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F544B05966EAC4ED38433C6 /* PhoneWCSessionDriver.swift */; };
 		2D3A5A4992970B649940D77F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0D5526A070535A974E9A0A /* RootView.swift */; };
 		33A53FEA32B8C9C824EE6735 /* GoogleAuthServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E8811AF44B280943CC212 /* GoogleAuthServiceTests.swift */; };
 		3425BFD1126608EBEA35C512 /* WatchLibraryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE7F0247E335E795C23A65F /* WatchLibraryRow.swift */; };
@@ -49,6 +50,7 @@
 		805659ACCFF09E7C66C3BB05 /* WatchLibraryMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAFCA25E8657AF5E6D7658F7 /* WatchLibraryMetadata.swift */; };
 		80CEC619F47B5014C92DFD3A /* WatchAudioLibraryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBCA5DCCACE334EE470F41A /* WatchAudioLibraryService.swift */; };
 		8986B709E74E6CA7908A8366 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B3E5897A8E9BFCFAC4644 /* AppEnvironment.swift */; };
+		8E17B6D611F7E10AF3BC9BEB /* WCSessionAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB33383412545BD6482A40B /* WCSessionAdapterTests.swift */; };
 		8EEA384377E426E0DBC1E98C /* WatchIncomingFileStagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34265591AAEF354E16CF6FC8 /* WatchIncomingFileStagerTests.swift */; };
 		9138C50564F042C09C2579A1 /* YouTubePodWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 696DF6F1B56DDB6CBE2046D2 /* YouTubePodWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9181DDE6816B67E58936F59A /* YouTubePodWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E91D7352EEF484B74069953 /* YouTubePodWatchApp.swift */; };
@@ -134,6 +136,7 @@
 /* Begin PBXFileReference section */
 		044E5B32006034714D27B5C4 /* YouTubeURLParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeURLParserTests.swift; sourceTree = "<group>"; };
 		04C89E86F6F5782E9A0CDBA3 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		0AB33383412545BD6482A40B /* WCSessionAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WCSessionAdapterTests.swift; sourceTree = "<group>"; };
 		0BE7F0247E335E795C23A65F /* WatchLibraryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLibraryRow.swift; sourceTree = "<group>"; };
 		0E579C68BB42B0407B7EFC0E /* DownloadManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManagerTests.swift; sourceTree = "<group>"; };
 		0FE522626BB6242CB4413740 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -179,6 +182,7 @@
 		8E91D7352EEF484B74069953 /* YouTubePodWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubePodWatchApp.swift; sourceTree = "<group>"; };
 		930332A1947C550BC84D1711 /* WatchSavedAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSavedAudio.swift; sourceTree = "<group>"; };
 		9DFF1F879337E77441B90173 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
+		9F544B05966EAC4ED38433C6 /* PhoneWCSessionDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneWCSessionDriver.swift; sourceTree = "<group>"; };
 		A4EAAA2AB960EA1DB4F54716 /* YouTubeDataClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeDataClient.swift; sourceTree = "<group>"; };
 		A574E735EDFA6630EEDAE4AF /* VideoRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoRowView.swift; sourceTree = "<group>"; };
 		AABE75B25EA6453DB246E461 /* PhoneWatchTransferServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneWatchTransferServiceTests.swift; sourceTree = "<group>"; };
@@ -330,6 +334,7 @@
 				501E8811AF44B280943CC212 /* GoogleAuthServiceTests.swift */,
 				AABE75B25EA6453DB246E461 /* PhoneWatchTransferServiceTests.swift */,
 				280A3139569100EC7C9EF820 /* WatchTransferSnapshotStoreTests.swift */,
+				0AB33383412545BD6482A40B /* WCSessionAdapterTests.swift */,
 				C7B4E37CCE420CE9C726446E /* YouTubeDataClientTests.swift */,
 				BE05D0C82802010EDB50433C /* YouTubePodSchemaTests.swift */,
 				044E5B32006034714D27B5C4 /* YouTubeURLParserTests.swift */,
@@ -376,6 +381,7 @@
 			isa = PBXGroup;
 			children = (
 				6D7C4B92010911A4AF7900CB /* PhoneWatchTransferService.swift */,
+				9F544B05966EAC4ED38433C6 /* PhoneWCSessionDriver.swift */,
 				812A408ED31A4B5EC3381241 /* WatchConnectivityTransport.swift */,
 				8A64D58C6920F8641413D02D /* WatchTransferSnapshotStore.swift */,
 				DE3F9213F2A346F08E0A1B30 /* WCSessionAdapter.swift */,
@@ -726,6 +732,7 @@
 				258671AADEF9343C818246D9 /* HomeView.swift in Sources */,
 				7C557EFC7D26B7539054F3FF /* LibraryView.swift in Sources */,
 				CF4BBF83C46A1F726C42C400 /* Models.swift in Sources */,
+				29AC2C41367C099C2BD4B4BC /* PhoneWCSessionDriver.swift in Sources */,
 				4C2B0DDDF55E35137B3EE46D /* PhoneWatchTransferService.swift in Sources */,
 				58CC34D99EE70EDE763B7ABE /* PlayerViews.swift in Sources */,
 				14E6FB9DE80532300BD55461 /* Protocols.swift in Sources */,
@@ -755,6 +762,7 @@
 				A790A44F5FF630C0F039F724 /* DownloadManagerTests.swift in Sources */,
 				33A53FEA32B8C9C824EE6735 /* GoogleAuthServiceTests.swift in Sources */,
 				53B2D2DB2BD65E419FF34F62 /* PhoneWatchTransferServiceTests.swift in Sources */,
+				8E17B6D611F7E10AF3BC9BEB /* WCSessionAdapterTests.swift in Sources */,
 				A6FD4DA4F98351D3F3B52F58 /* WatchTransferSnapshotStoreTests.swift in Sources */,
 				7B76EAB0602D03F3C98FA873 /* YouTubeDataClientTests.swift in Sources */,
 				FEC5F56EE6896FDC7E40E27A /* YouTubePodSchemaTests.swift in Sources */,
