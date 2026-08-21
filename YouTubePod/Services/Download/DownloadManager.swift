@@ -6,21 +6,24 @@ import Observation
 final class DownloadManager {
     private(set) var phases: [String: DownloadPhase] = [:]
     private var queue: [VideoSummary] = []
-    private var workerTask: Task<Void, Never>?
-    private var activeVideoID: String?
+    private var activeTasks: [String: Task<Void, Never>] = [:]
     private var cancelledVideoIDs = Set<String>()
     private let extractor: any AudioExtracting
     private let library: any AudioLibraryManaging
     private let extractionRetryDelays: [Duration]
+    private let maximumConcurrentDownloads: Int
 
     init(
         extractor: any AudioExtracting,
         library: any AudioLibraryManaging,
-        extractionRetryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)]
+        extractionRetryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)],
+        maximumConcurrentDownloads: Int = 3
     ) {
+        precondition(maximumConcurrentDownloads > 0)
         self.extractor = extractor
         self.library = library
         self.extractionRetryDelays = extractionRetryDelays
+        self.maximumConcurrentDownloads = maximumConcurrentDownloads
     }
 
     func enqueue(_ video: VideoSummary) {
@@ -29,17 +32,18 @@ final class DownloadManager {
         cancelledVideoIDs.remove(video.id)
         phases[video.id] = .queued
         queue.append(video)
-        startWorkerIfNeeded()
+        startDownloadsIfPossible()
     }
 
     func cancel(videoID: String) async {
         guard phases[videoID]?.isActive == true else { return }
         cancelledVideoIDs.insert(videoID)
-        if activeVideoID == videoID {
-            await extractor.cancel()
+        if activeTasks[videoID] != nil {
+            await extractor.cancel(requestID: videoID)
         } else {
             queue.removeAll { $0.id == videoID }
             phases[videoID] = .failed("キャンセルしました")
+            cancelledVideoIDs.remove(videoID)
         }
     }
 
@@ -50,9 +54,10 @@ final class DownloadManager {
         for id in queuedIDs {
             phases[id] = .failed("バックグラウンド移行のためキャンセルしました")
         }
-        if let activeVideoID {
-            cancelledVideoIDs.insert(activeVideoID)
-            await extractor.cancel()
+        let activeVideoIDs = Array(activeTasks.keys)
+        cancelledVideoIDs.formUnion(activeVideoIDs)
+        for videoID in activeVideoIDs {
+            await extractor.cancel(requestID: videoID)
         }
     }
 
@@ -61,37 +66,39 @@ final class DownloadManager {
         phases.removeValue(forKey: videoID)
     }
 
-    private func startWorkerIfNeeded() {
-        guard workerTask == nil else { return }
-        workerTask = Task { [weak self] in await self?.drainQueue() }
+    private func startDownloadsIfPossible() {
+        while activeTasks.count < maximumConcurrentDownloads, !queue.isEmpty {
+            let video = queue.removeFirst()
+            activeTasks[video.id] = Task { @MainActor [weak self] in
+                await self?.process(video)
+            }
+        }
     }
 
-    private func drainQueue() async {
-        defer { workerTask = nil; activeVideoID = nil }
-        while !queue.isEmpty {
-            let video = queue.removeFirst()
-            activeVideoID = video.id
-            phases[video.id] = .downloading(0)
-            do {
-                let extracted = try await extractWithRetry(video)
-                guard !cancelledVideoIDs.contains(video.id) else {
-                    try? FileManager.default.removeItem(at: extracted.fileURL.deletingLastPathComponent())
-                    throw CancellationError()
-                }
-                phases[video.id] = .validating
-                let saved = try await library.importAudio(extracted, metadata: video)
-                guard !cancelledVideoIDs.contains(video.id) else {
-                    try? library.delete(saved)
-                    throw CancellationError()
-                }
-                phases[video.id] = .completed
-            } catch {
-                phases[video.id] = .failed(
-                    cancelledVideoIDs.contains(video.id) ? "キャンセルしました" : error.localizedDescription
-                )
-            }
+    private func process(_ video: VideoSummary) async {
+        defer {
             cancelledVideoIDs.remove(video.id)
-            activeVideoID = nil
+            activeTasks.removeValue(forKey: video.id)
+            startDownloadsIfPossible()
+        }
+        phases[video.id] = .downloading(0)
+        do {
+            let extracted = try await extractWithRetry(video)
+            guard !cancelledVideoIDs.contains(video.id) else {
+                try? FileManager.default.removeItem(at: extracted.fileURL.deletingLastPathComponent())
+                throw CancellationError()
+            }
+            phases[video.id] = .validating
+            let saved = try await library.importAudio(extracted, metadata: video)
+            guard !cancelledVideoIDs.contains(video.id) else {
+                try? library.delete(saved)
+                throw CancellationError()
+            }
+            phases[video.id] = .completed
+        } catch {
+            phases[video.id] = .failed(
+                cancelledVideoIDs.contains(video.id) ? "キャンセルしました" : error.localizedDescription
+            )
         }
     }
 
@@ -101,7 +108,7 @@ final class DownloadManager {
             guard !cancelledVideoIDs.contains(video.id) else { throw CancellationError() }
             phases[video.id] = .downloading(0)
             do {
-                return try await extractor.extract(from: video.watchURL) { [weak self] value in
+                return try await extractor.extract(requestID: video.id, from: video.watchURL) { [weak self] value in
                     Task { @MainActor in
                         guard self?.cancelledVideoIDs.contains(video.id) == false else { return }
                         self?.phases[video.id] = .downloading(min(max(value, 0), 1))

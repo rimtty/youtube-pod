@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 import Observation
+import OSLog
 
 /// An immutable playback snapshot. Keeping SwiftData models out of the player
 /// prevents a remotely deleted model from remaining referenced by AVPlayer/UI.
@@ -97,11 +98,13 @@ final class WatchAudioPlayerService {
     private let audioSession: any WatchAudioSessionActivating
     private let persistPlaybackPosition: @MainActor (String, TimeInterval, Bool) throws -> Void
     private let now: @MainActor () -> Date
+    private let logger = Logger(subsystem: "com.rimtty.YouTubePod", category: "WatchPlayback")
     private var queue: [WatchPlaybackItem] = []
     private var index = 0
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var failedToEndObserver: NSObjectProtocol?
+    private var stalledObserver: NSObjectProtocol?
     private var interruptionObserver: NSObjectProtocol?
     private var resumptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
@@ -121,7 +124,8 @@ final class WatchAudioPlayerService {
             _, _, _ in
         }
     ) {
-        self.player = AVPlayer()
+        let player = AVPlayer()
+        self.player = player
         self.audioSession = WatchAVAudioSessionActivator()
         self.persistPlaybackPosition = persistPlaybackPosition
         self.now = Date.init
@@ -159,6 +163,9 @@ final class WatchAudioPlayerService {
         if let failedToEndObserver {
             NotificationCenter.default.removeObserver(failedToEndObserver)
         }
+        if let stalledObserver {
+            NotificationCenter.default.removeObserver(stalledObserver)
+        }
         if let interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)
         }
@@ -174,6 +181,17 @@ final class WatchAudioPlayerService {
     }
 
     func play(_ item: WatchPlaybackItem, queue: [WatchPlaybackItem]) {
+        if currentItem?.id == item.id {
+            // Selecting the highlighted library row only reopens Now Playing.
+            // Reloading AVPlayer would pause audible playback and seek back to
+            // the last periodic persistence sample.
+            let playableQueue = queue.filter { $0.duration > 0 }
+            self.queue = playableQueue.contains(where: { $0.id == item.id })
+                ? playableQueue
+                : [item] + playableQueue.filter { $0.id != item.id }
+            index = self.queue.firstIndex(where: { $0.id == item.id }) ?? 0
+            return
+        }
         guard item.fileURL.isFileURL,
               FileManager.default.fileExists(atPath: item.fileURL.path) else {
             stopAndClearCurrentItem()
@@ -215,12 +233,19 @@ final class WatchAudioPlayerService {
     func seek(to seconds: TimeInterval) {
         pendingSkipTask?.cancel()
         pendingSkipTask = nil
+        logger.info(
+            "seek_requested kind=direct from=\(self.currentTime, privacy: .public) target=\(seconds, privacy: .public) playing=\(self.isPlaying)"
+        )
+        debugTrace("seek_requested kind=direct from=\(currentTime) target=\(seconds) playing=\(isPlaying)")
         applySeekRequest(to: seconds)
     }
 
     func skip(by seconds: TimeInterval) {
         guard seconds.isFinite else { return }
         let value = prepareSeek(to: currentTime + seconds)
+        logger.info(
+            "seek_requested kind=skip delta=\(seconds, privacy: .public) target=\(value, privacy: .public) playing=\(self.isPlaying)"
+        )
         pendingSkipTask?.cancel()
         pendingSkipTask = Task { @MainActor [weak self] in
             do {
@@ -409,6 +434,9 @@ final class WatchAudioPlayerService {
 
     func handlePlaybackFailure() {
         guard currentItem != nil else { return }
+        logger.error(
+            "playback_failed rate=\(self.player.rate, privacy: .public) timeControl=\(self.player.timeControlStatus.rawValue, privacy: .public) itemStatus=\(self.player.currentItem?.status.rawValue ?? -1, privacy: .public) error=\(self.player.currentItem?.error?.localizedDescription ?? "none", privacy: .public)"
+        )
         shouldResumeAfterInterruption = false
         activationRequestID += 1
         player.pause()
@@ -416,6 +444,19 @@ final class WatchAudioPlayerService {
         playbackError = .playbackFailed
         persistCurrentPosition(force: true)
         updateNowPlaying(elapsedOnly: false)
+    }
+
+    func handlePlaybackStalled() {
+        guard currentItem != nil else { return }
+        logger.error(
+            "playback_stalled position=\(self.currentTime, privacy: .public) rate=\(self.player.rate, privacy: .public) timeControl=\(self.player.timeControlStatus.rawValue, privacy: .public)"
+        )
+        debugTrace(
+            "playback_stalled position=\(currentTime) rate=\(player.rate) timeControl=\(player.timeControlStatus.rawValue)"
+        )
+        guard isPlaying else { return }
+        player.play()
+        logger.info("playback_stall_recovery_requested")
     }
 
     /// Periodic callbacks can arrive after a seek. Ignore stale samples until
@@ -510,24 +551,60 @@ final class WatchAudioPlayerService {
         return value
     }
 
-    private func performSeek(to value: TimeInterval, requestID: Int) {
-        let tolerance = CMTime(seconds: 0.1, preferredTimescale: 600)
+    private func performSeek(to value: TimeInterval, requestID: Int, attempt: Int = 0) {
+        let tolerance = attempt == 0
+            ? CMTime(seconds: 0.1, preferredTimescale: 600)
+            : .zero
+        let shouldResume = isPlaying
+        logger.info(
+            "seek_performing request=\(requestID) attempt=\(attempt) target=\(value, privacy: .public) resume=\(shouldResume) rate=\(self.player.rate, privacy: .public) timeControl=\(self.player.timeControlStatus.rawValue, privacy: .public) itemStatus=\(self.player.currentItem?.status.rawValue ?? -1, privacy: .public)"
+        )
+        debugTrace(
+            "seek_performing request=\(requestID) attempt=\(attempt) target=\(value) resume=\(shouldResume) rate=\(player.rate) timeControl=\(player.timeControlStatus.rawValue) itemStatus=\(player.currentItem?.status.rawValue ?? -1)"
+        )
         player.seek(
             to: CMTime(seconds: value, preferredTimescale: 600),
             toleranceBefore: tolerance,
             toleranceAfter: tolerance
         ) { [weak self] finished in
             Task { @MainActor [weak self] in
-                guard let self, finished, requestID == self.seekRequestID else { return }
+                guard let self else { return }
+                guard requestID == self.seekRequestID else {
+                    self.logger.info("seek_ignored request=\(requestID) reason=superseded")
+                    return
+                }
+                self.logger.info(
+                    "seek_completed request=\(requestID) attempt=\(attempt) target=\(value, privacy: .public) finished=\(finished) playing=\(self.isPlaying) rate=\(self.player.rate, privacy: .public) timeControl=\(self.player.timeControlStatus.rawValue, privacy: .public) itemStatus=\(self.player.currentItem?.status.rawValue ?? -1, privacy: .public) error=\(self.player.currentItem?.error?.localizedDescription ?? "none", privacy: .public)"
+                )
+                self.debugTrace(
+                    "seek_completed request=\(requestID) attempt=\(attempt) target=\(value) finished=\(finished) playing=\(self.isPlaying) rate=\(self.player.rate) timeControl=\(self.player.timeControlStatus.rawValue) itemStatus=\(self.player.currentItem?.status.rawValue ?? -1) error=\(self.player.currentItem?.error?.localizedDescription ?? "none")"
+                )
+                if !finished, attempt == 0 {
+                    self.logger.error("seek_retrying request=\(requestID) target=\(value, privacy: .public)")
+                    self.performSeek(to: value, requestID: requestID, attempt: 1)
+                    return
+                }
                 self.currentTime = value
                 self.protectedSeekTarget = value
                 self.protectedSeekDeadline = self.now().addingTimeInterval(1)
-                if self.isPlaying {
+                if shouldResume, self.isPlaying {
                     self.player.play()
                 }
                 self.updateNowPlaying(elapsedOnly: true)
             }
         }
+        // AVPlayer supports seeking while its desired playback rate remains
+        // active. Reasserting play here avoids the stopped-rate state observed
+        // on physical Watch after a large local-file seek.
+        if shouldResume {
+            player.play()
+        }
+    }
+
+    private func debugTrace(_ message: String) {
+#if DEBUG
+        print("[WatchPlayback] \(message)")
+#endif
     }
 
     @discardableResult
@@ -580,6 +657,15 @@ final class WatchAudioPlayerService {
                 self?.handlePlaybackFailure()
             }
         }
+        stalledObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.playbackStalledNotification,
+            object: playerItem,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handlePlaybackStalled()
+            }
+        }
         itemStatusTask?.cancel()
         itemStatusTask = Task { @MainActor [weak self, weak playerItem] in
             for _ in 0..<100 {
@@ -615,6 +701,10 @@ final class WatchAudioPlayerService {
         if let failedToEndObserver {
             NotificationCenter.default.removeObserver(failedToEndObserver)
             self.failedToEndObserver = nil
+        }
+        if let stalledObserver {
+            NotificationCenter.default.removeObserver(stalledObserver)
+            self.stalledObserver = nil
         }
     }
 

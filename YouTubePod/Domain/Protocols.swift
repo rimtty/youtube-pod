@@ -14,6 +14,27 @@ protocol AudioExtracting: Sendable {
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> ExtractedAudio
     func cancel() async
+
+    func extract(
+        requestID: String,
+        from url: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ExtractedAudio
+    func cancel(requestID: String) async
+}
+
+extension AudioExtracting {
+    func extract(
+        requestID _: String,
+        from url: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ExtractedAudio {
+        try await extract(from: url, progress: progress)
+    }
+
+    func cancel(requestID _: String) async {
+        await cancel()
+    }
 }
 
 @MainActor

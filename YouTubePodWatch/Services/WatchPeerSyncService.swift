@@ -71,6 +71,7 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
         lastActivationFailure = nil
         activationRequestIsPending = true
         driver.installDelegate(self)
+        WatchSyncLog.watchPeer.notice("activate requested")
         driver.activate()
     }
 
@@ -133,6 +134,9 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
             throw WatchPeerSyncError.sessionUnavailable
         }
         driver.transferUserInfo(try acknowledgement.userInfo())
+        WatchSyncLog.watchPeer.notice(
+            "ack_enqueued transfer=\(acknowledgement.transferID.uuidString, privacy: .public) revision=\(acknowledgement.revision) youtube=\(acknowledgement.youtubeID, privacy: .public) outcome=\(acknowledgement.outcome.rawValue, privacy: .public)"
+        )
     }
 
     func publishInventory(_ inventory: WatchInventorySnapshot) throws {
@@ -140,6 +144,9 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
             throw WatchPeerSyncError.sessionUnavailable
         }
         try driver.updateApplicationContext(inventory.applicationContext())
+        WatchSyncLog.watchPeer.notice(
+            "inventory_published generation=\(inventory.generation) entries=\(inventory.entries.count)"
+        )
     }
 
     func currentInventoryRequest() -> WatchInventoryRequest? {
@@ -184,11 +191,17 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
                 fileAt: fileURL,
                 metadata: metadata
             )
+            WatchSyncLog.watchPeer.notice(
+                "file_staged transfer=\(staged.envelope.transferID.uuidString, privacy: .public) revision=\(staged.envelope.revision) youtube=\(staged.envelope.youtubeID, privacy: .public) kind=\(staged.envelope.fileKind.rawValue, privacy: .public)"
+            )
             Task { @MainActor [weak self] in
                 self?.stagedFileHandler?(staged)
             }
             return nil
         } catch {
+            WatchSyncLog.watchPeer.error(
+                "file_staging_failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
             // The callback URL cannot outlive this method. If metadata still
             // identifies an audio transfer, enqueue a durable failure
             // immediately. Artwork is optional and malformed metadata has no
@@ -225,6 +238,9 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
         guard let request = Self.normalizedInventoryRequest(
             applicationContext: applicationContext
         ) else { return }
+        WatchSyncLog.watchPeer.notice(
+            "inventory_request_received request=\(request.requestID.uuidString, privacy: .public)"
+        )
         Task { @MainActor [weak self] in
             self?.inventoryRequestHandler?(request)
         }
@@ -274,6 +290,13 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
             activationState: activationState,
             error: error
         )
+        if let failure {
+            WatchSyncLog.watchPeer.error(
+                "activation_completed result=failed code=\(failure.diagnosticCode, privacy: .public)"
+            )
+        } else {
+            WatchSyncLog.watchPeer.notice("activation_completed result=success")
+        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.activationRequestIsPending = false
@@ -326,6 +349,16 @@ enum WatchPeerSyncError: LocalizedError, Equatable, Sendable {
     case activationFailed(code: String, message: String)
     case activationTimedOut
     case contentDrainTimedOut
+
+    var diagnosticCode: String {
+        switch self {
+        case .sessionUnavailable: "session-unavailable"
+        case .unsupported: "unsupported"
+        case .activationFailed(let code, _): code
+        case .activationTimedOut: "activation-timeout"
+        case .contentDrainTimedOut: "content-drain-timeout"
+        }
+    }
 
     var errorDescription: String? {
         switch self {

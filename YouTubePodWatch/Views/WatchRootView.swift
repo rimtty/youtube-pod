@@ -108,7 +108,9 @@ struct WatchRootView: View {
                         reduceMotionOverride: reduceMotionOverride
                     ) {
                         guard let item = playbackItem(audio) else { return }
-                        player.play(item, queue: audios.compactMap(playbackItem))
+                        if player.currentItem?.id != item.id {
+                            player.play(item, queue: audios.compactMap(playbackItem))
+                        }
                         showsPlayer = true
                     }
                     .listRowInsets(EdgeInsets(top: 5, leading: 4, bottom: 5, trailing: 4))
@@ -173,6 +175,7 @@ struct WatchRootView: View {
                 in: Capsule()
             )
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("watch.receiver.receiving")
             .accessibilityLabel("iPhoneから音声を受信中")
         } else if let message = receiver.lastErrorMessage {
             if WatchUIPresentation.receiverErrorLayout(

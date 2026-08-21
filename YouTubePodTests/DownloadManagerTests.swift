@@ -3,28 +3,36 @@ import XCTest
 
 @MainActor
 final class DownloadManagerTests: XCTestCase {
-    func testQueueImportsItemsSeriallyAndCompletes() async throws {
+    func testQueueRunsAtMostThreeImportsConcurrentlyAndCompletes() async throws {
         let extractor = ImmediateExtractor()
         let library = LibraryStub()
         let manager = DownloadManager(extractor: extractor, library: library)
         let first = video(id: "aaaaaaaaaaa")
         let second = video(id: "bbbbbbbbbbb")
+        let third = video(id: "cccccccccc1")
+        let fourth = video(id: "dddddddddd1")
 
         manager.enqueue(first)
         manager.enqueue(second)
+        manager.enqueue(third)
+        manager.enqueue(fourth)
         try await waitUntil {
-            manager.phases[first.id] == .completed && manager.phases[second.id] == .completed
+            [first, second, third, fourth].allSatisfy { manager.phases[$0.id] == .completed }
         }
 
-        XCTAssertEqual(library.importedVideoIDs, [first.id, second.id])
+        XCTAssertEqual(Set(library.importedVideoIDs), Set([first.id, second.id, third.id, fourth.id]))
         let maximumConcurrentExtractions = await extractor.maximumConcurrentExtractions
-        XCTAssertEqual(maximumConcurrentExtractions, 1)
+        XCTAssertEqual(maximumConcurrentExtractions, 3)
     }
 
     func testCancellingQueuedItemLeavesActiveItemIndependent() async throws {
         let extractor = BlockingExtractor()
         let library = LibraryStub()
-        let manager = DownloadManager(extractor: extractor, library: library)
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: library,
+            maximumConcurrentDownloads: 1
+        )
         let active = video(id: "ccccccccccc")
         let queued = video(id: "ddddddddddd")
 
@@ -127,7 +135,11 @@ final class DownloadManagerTests: XCTestCase {
     func testCancellingDuringValidationDeletesImportedResult() async throws {
         let extractor = ImmediateExtractor()
         let library = BlockingLibraryStub()
-        let manager = DownloadManager(extractor: extractor, library: library)
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: library,
+            maximumConcurrentDownloads: 1
+        )
         let item = video(id: "ffffffffff1")
 
         manager.enqueue(item)
@@ -184,7 +196,11 @@ final class DownloadManagerTests: XCTestCase {
     func testCancelAllCancelsActiveExtractionAndQueuedItems() async throws {
         let extractor = BlockingExtractor()
         let library = LibraryStub()
-        let manager = DownloadManager(extractor: extractor, library: library)
+        let manager = DownloadManager(
+            extractor: extractor,
+            library: library,
+            maximumConcurrentDownloads: 1
+        )
         let active = video(id: "cancelall01")
         let queued = video(id: "cancelall02")
         manager.enqueue(active)
@@ -226,7 +242,11 @@ final class DownloadManagerTests: XCTestCase {
 
     func testCancelAllDuringValidationDeletesImportedResult() async throws {
         let library = BlockingLibraryStub()
-        let manager = DownloadManager(extractor: ImmediateExtractor(), library: library)
+        let manager = DownloadManager(
+            extractor: ImmediateExtractor(),
+            library: library,
+            maximumConcurrentDownloads: 1
+        )
         let item = video(id: "cancelall04")
         manager.enqueue(item)
         try await waitUntil { manager.phases[item.id] == .validating }
@@ -240,7 +260,11 @@ final class DownloadManagerTests: XCTestCase {
 
     func testImportFailureDoesNotPreventNextQueuedItemFromCompleting() async throws {
         let library = FailFirstImportLibraryStub()
-        let manager = DownloadManager(extractor: ImmediateExtractor(), library: library)
+        let manager = DownloadManager(
+            extractor: ImmediateExtractor(),
+            library: library,
+            maximumConcurrentDownloads: 1
+        )
         let first = video(id: "importfail1")
         let second = video(id: "importnext1")
         manager.enqueue(first)

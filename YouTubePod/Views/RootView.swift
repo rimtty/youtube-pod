@@ -50,9 +50,19 @@ struct RootView: View {
                 }
             }
             .onChange(of: scenePhase) { _, newPhase in
-                guard newPhase == .background else { return }
-                environment.player.persistPosition()
-                Task { await environment.downloads.cancelAll() }
+                switch newPhase {
+                case .active:
+                    // Reattach to WCSession.outstandingFileTransfers and refresh
+                    // persisted progress as soon as the foreground UI returns.
+                    environment.watchTransfers.refreshState()
+                case .background:
+                    environment.player.persistPosition()
+                    Task { await environment.downloads.cancelAll() }
+                case .inactive:
+                    break
+                @unknown default:
+                    break
+                }
             }
     }
 
@@ -118,6 +128,7 @@ struct RootView: View {
                     WatchTransfersView()
                 }
             }
+            .badge(pendingWatchTransferCount)
         }
         .tint(PodPalette.raspberry)
     }
@@ -184,6 +195,7 @@ struct RootView: View {
                     WatchTransfersView()
                 }
             }
+            .badge(pendingWatchTransferCount)
         }
         .tint(PodPalette.raspberry)
     }
@@ -232,6 +244,10 @@ struct RootView: View {
 
     private var watchAudioCount: Int {
         watchTransferRecords.lazy.filter { $0.state != .removedFromWatch }.count
+    }
+
+    private var pendingWatchTransferCount: Int {
+        watchTransferRecords.lazy.filter { $0.state.isPendingTransfer }.count
     }
 
     private func phase(for videoID: String) -> DownloadPhase? {

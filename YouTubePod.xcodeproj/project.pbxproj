@@ -58,6 +58,7 @@
 		8EEA384377E426E0DBC1E98C /* WatchIncomingFileStagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34265591AAEF354E16CF6FC8 /* WatchIncomingFileStagerTests.swift */; };
 		9138C50564F042C09C2579A1 /* YouTubePodWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 696DF6F1B56DDB6CBE2046D2 /* YouTubePodWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9181DDE6816B67E58936F59A /* YouTubePodWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E91D7352EEF484B74069953 /* YouTubePodWatchApp.swift */; };
+		954030D209C4A77E229186D0 /* WatchSyncLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749D4FA2155F0EB4E5592804 /* WatchSyncLog.swift */; };
 		986DAE8E2AFB7AA426645274 /* WatchSessionReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB902880F3D658771A74D9C7 /* WatchSessionReceiver.swift */; };
 		9B0D795939E96EFA965880A1 /* WatchPeerSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB2C2EF35D1511E2E502C271 /* WatchPeerSyncService.swift */; };
 		9D4143519ED0BFD340DBF7B4 /* YouTubePodApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F9ED0423EE5A19C54F5AA4 /* YouTubePodApp.swift */; };
@@ -80,10 +81,12 @@
 		D22BD9FDB1306356F3133E1A /* ChannelVideosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57C815A832E88BFC47DB83BB /* ChannelVideosView.swift */; };
 		D237F1C3E37558AA38CE4871 /* Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8461593F7ABB3843AEDA6BC3 /* Formatting.swift */; };
 		E24FA4944E552E20D89EF859 /* GoogleAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379E658A1A8E71F6D9B50EEB /* GoogleAuthService.swift */; };
+		E3F19E1657BEBBDCED4BF4B9 /* WatchSimulatorSyncFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A4DD085ED95B7E9CB14014 /* WatchSimulatorSyncFixture.swift */; };
 		F51F69E595A3D5C8C6DDAD5C /* WatchPeerSyncServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2274003E6E80DC4643F2A8A /* WatchPeerSyncServiceTests.swift */; };
 		F80C5EA6DB744FB9DFA01821 /* DomainModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4AE588449D9CD2706E58E68 /* DomainModelTests.swift */; };
 		FA8F9A25A3AC6EA259D7B799 /* AudioPlayerServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB293A872F8849BC687BE49 /* AudioPlayerServiceTests.swift */; };
 		FB2CFB66624064D140EA0A85 /* WatchIncomingFileStager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8402F71553DB87ACCB2F8D13 /* WatchIncomingFileStager.swift */; };
+		FCAF8A58B44B64F648608B1D /* WatchSyncLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749D4FA2155F0EB4E5592804 /* WatchSyncLog.swift */; };
 		FEC5F56EE6896FDC7E40E27A /* YouTubePodSchemaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE05D0C82802010EDB50433C /* YouTubePodSchemaTests.swift */; };
 		FED60DFC30C0EBB5BAE7E89F /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = FD1CCA0C071673B7CBABD275 /* Python.xcframework */; };
 /* End PBXBuildFile section */
@@ -161,6 +164,7 @@
 		322893D08CB6846C6B6EA1EB /* WatchSessionReceiverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionReceiverTests.swift; sourceTree = "<group>"; };
 		34265591AAEF354E16CF6FC8 /* WatchIncomingFileStagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchIncomingFileStagerTests.swift; sourceTree = "<group>"; };
 		36083239230144DE7DA56E93 /* WatchAudioLibraryServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioLibraryServiceTests.swift; sourceTree = "<group>"; };
+		36A4DD085ED95B7E9CB14014 /* WatchSimulatorSyncFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSimulatorSyncFixture.swift; sourceTree = "<group>"; };
 		379E658A1A8E71F6D9B50EEB /* GoogleAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthService.swift; sourceTree = "<group>"; };
 		39ADADD4657193B814674447 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
 		3D0D5526A070535A974E9A0A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -180,6 +184,7 @@
 		6D7C4B92010911A4AF7900CB /* PhoneWatchTransferService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneWatchTransferService.swift; sourceTree = "<group>"; };
 		7088CDCBA218FE36100270DC /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
 		70AD9BC35E4D93F03DB65200 /* WatchTransferRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTransferRecord.swift; sourceTree = "<group>"; };
+		749D4FA2155F0EB4E5592804 /* WatchSyncLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSyncLog.swift; sourceTree = "<group>"; };
 		776B3C239D404D1E559344E2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		780B899D6BE945278654079B /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		79AD702E28F627326D1D2B00 /* WatchCapacityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCapacityChecker.swift; sourceTree = "<group>"; };
@@ -428,6 +433,7 @@
 		92650DCD1982C157508ACF1E /* Debug */ = {
 			isa = PBXGroup;
 			children = (
+				36A4DD085ED95B7E9CB14014 /* WatchSimulatorSyncFixture.swift */,
 				BD98D97E966F4C5A90599E7D /* WatchUITestFixture.swift */,
 			);
 			path = Debug;
@@ -436,6 +442,7 @@
 		B29F80A735EE90D6FD941D99 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				749D4FA2155F0EB4E5592804 /* WatchSyncLog.swift */,
 				B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */,
 			);
 			path = Shared;
@@ -777,6 +784,8 @@
 				6BB2F94A12A491757926E063 /* WatchRootView.swift in Sources */,
 				4EC921A8D181478022C12A9E /* WatchSavedAudio.swift in Sources */,
 				986DAE8E2AFB7AA426645274 /* WatchSessionReceiver.swift in Sources */,
+				E3F19E1657BEBBDCED4BF4B9 /* WatchSimulatorSyncFixture.swift in Sources */,
+				954030D209C4A77E229186D0 /* WatchSyncLog.swift in Sources */,
 				779762809D5765754F692BAD /* WatchTransferEnvelope.swift in Sources */,
 				68BC812623FA2D1E285CC6E3 /* WatchUIPresentation.swift in Sources */,
 				4A39DE5ACF2D927F16C2626B /* WatchUITestFixture.swift in Sources */,
@@ -820,6 +829,7 @@
 				3B240296E21020FC8807F61C /* VideoRowView.swift in Sources */,
 				AB5D836175C5A812F815937D /* WCSessionAdapter.swift in Sources */,
 				3F8B56EFF8C2FD09703EE794 /* WatchConnectivityTransport.swift in Sources */,
+				FCAF8A58B44B64F648608B1D /* WatchSyncLog.swift in Sources */,
 				602EFFBAE7489C7DA9AE25E3 /* WatchTransferEnvelope.swift in Sources */,
 				267277CF39523093EA184D28 /* WatchTransferRecord.swift in Sources */,
 				C08E490BB721CF9680D5D856 /* WatchTransferSnapshotStore.swift in Sources */,

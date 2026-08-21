@@ -14,7 +14,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private let makeInventoryRequest: @MainActor () -> WatchInventoryRequest
     private let automaticRetryDelays: [Duration]
     private let confirmationTimeout: TimeInterval
-    private var activeTransferID: UUID?
+    private var isDrainingQueuedTransfers = false
     private var lastProgressSaveAt: [UUID: Date] = [:]
     private var automaticRetryTasks: [String: Task<Void, Never>] = [:]
     private var confirmationTimeoutTasks: [String: Task<Void, Never>] = [:]
@@ -56,6 +56,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        WatchSyncLog.phoneService.notice("service_started")
         transport.eventHandler = { [weak self] event in
             self?.handle(event)
         }
@@ -92,6 +93,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         let previousRevision = previous?.revision
         let transferID = UUID()
         let revision = max(1, (previous?.revision ?? 0) + 1)
+        WatchSyncLog.phoneService.notice(
+            "prepare_started transfer=\(transferID.uuidString, privacy: .public) revision=\(revision) youtube=\(source.youtubeID, privacy: .public)"
+        )
         let record: WatchTransferRecord
         if let previous {
             record = previous
@@ -132,7 +136,13 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         do {
             prepared = try await snapshots.prepare(source: source, transferID: transferID)
             record.sourceFileSize = try fileSize(at: prepared.audioURL)
+            WatchSyncLog.phoneService.notice(
+                "prepare_completed transfer=\(transferID.uuidString, privacy: .public) bytes=\(record.sourceFileSize) artwork=\(prepared.artworkURL != nil)"
+            )
         } catch {
+            WatchSyncLog.phoneService.error(
+                "prepare_failed transfer=\(transferID.uuidString, privacy: .public) code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
             await snapshots.removeTransfer(transferID)
             restorePreviousIdentity(
                 of: record,
@@ -154,7 +164,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             if let previousTransferID, previousTransferID != transferID {
                 await snapshots.removeTransfer(previousTransferID)
             }
-            await startNextQueuedTransferIfPossible()
+            await drainQueuedTransfersIfPossible()
         } catch {
             modelContext.rollback()
             await snapshots.removeTransfer(transferID)
@@ -182,9 +192,8 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         markFailed(record, code: "cancelled", message: "転送をキャンセルしました。")
         liveProgress[videoID] = nil
         if persistChanges() {
-            if activeTransferID == record.transferID { activeTransferID = nil }
             sessionStartedTransferIDs.remove(record.transferID)
-            scheduleNextQueuedTransferIfNeeded()
+            scheduleQueuedTransfersIfNeeded()
         }
     }
 
@@ -246,7 +255,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             throw WatchTransferServiceError.persistence(error.localizedDescription)
         }
         await snapshots.removeTransfer(oldTransferID)
-        await startNextQueuedTransferIfPossible()
+        await drainQueuedTransfersIfPossible()
     }
 
     func requestDeletion(videoID: String) throws {
@@ -293,6 +302,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         switch event {
         case .statusChanged(let status):
             connectionStatus = status
+            WatchSyncLog.phoneService.notice(
+                "status_changed activation=\(String(describing: status.activation), privacy: .public) paired=\(String(describing: status.isPaired), privacy: .public) installed=\(String(describing: status.isWatchAppInstalled), privacy: .public) can_transfer=\(status.canTransfer)"
+            )
             // A status callback defines a new reconciliation boundary. Any
             // transfer remembered only by this process must now be proven by
             // WCSession.outstandingFileTransfers, otherwise a missed
@@ -331,6 +343,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                   record.state != .removedFromWatch else { return }
             if record.senderFailed { return }
             if let failure {
+                WatchSyncLog.phoneService.error(
+                    "delivery_failed transfer=\(key.transferID.uuidString, privacy: .public) kind=\(key.fileKind.rawValue, privacy: .public) code=\(failure.code, privacy: .public)"
+                )
                 if key.fileKind == .artwork {
                     // Artwork is optional. Keep the audio transfer usable even
                     // when WatchConnectivity cannot deliver the thumbnail.
@@ -347,14 +362,13 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 liveProgress[record.youtubeID] = nil
                 lastProgressSaveAt[key.transferID] = nil
                 if persistChanges() {
-                    if activeTransferID == key.transferID { activeTransferID = nil }
                     sessionStartedTransferIDs.remove(key.transferID)
                     if record.state == .failed {
                         scheduleAutomaticRetryIfPossible(for: record, failure: failure)
                     } else if record.state == .availableOnWatch {
                         Task { await snapshots.removeTransfer(key.transferID) }
                     }
-                    scheduleNextQueuedTransferIfNeeded()
+                    scheduleQueuedTransfersIfNeeded()
                 }
                 return
             }
@@ -365,6 +379,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 liveProgress[record.youtubeID] = 1
             case .artwork: record.artworkDeliveryFinished = true
             }
+            WatchSyncLog.phoneService.notice(
+                "delivery_completed transfer=\(key.transferID.uuidString, privacy: .public) kind=\(key.fileKind.rawValue, privacy: .public)"
+            )
             completeEvent(for: record)
 
         case .acknowledgement(let acknowledgement):
@@ -379,6 +396,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         guard let record = record(videoID: acknowledgement.youtubeID),
               record.transferID == acknowledgement.transferID,
               record.revision == acknowledgement.revision else { return }
+        WatchSyncLog.phoneService.notice(
+            "ack_correlated transfer=\(acknowledgement.transferID.uuidString, privacy: .public) revision=\(acknowledgement.revision) youtube=\(acknowledgement.youtubeID, privacy: .public) outcome=\(acknowledgement.outcome.rawValue, privacy: .public)"
+        )
         cancelScheduledTasks(videoID: acknowledgement.youtubeID)
 
         switch acknowledgement.outcome {
@@ -417,9 +437,8 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             liveProgress[record.youtubeID] = nil
             lastProgressSaveAt[record.transferID] = nil
             if persistChanges() {
-                if activeTransferID == record.transferID { activeTransferID = nil }
                 sessionStartedTransferIDs.remove(record.transferID)
-                scheduleNextQueuedTransferIfNeeded()
+                scheduleQueuedTransfersIfNeeded()
             }
         case .deleted:
             transport.cancelFiles(transferID: record.transferID)
@@ -429,15 +448,17 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.watchImportFailed = false
             liveProgress[record.youtubeID] = nil
             if persistChanges() {
-                if activeTransferID == record.transferID { activeTransferID = nil }
                 sessionStartedTransferIDs.remove(record.transferID)
                 Task { await snapshots.removeTransfer(acknowledgement.transferID) }
-                scheduleNextQueuedTransferIfNeeded()
+                scheduleQueuedTransfersIfNeeded()
             }
         }
     }
 
     private func handleInventory(_ inventory: WatchInventorySnapshot) {
+        WatchSyncLog.phoneService.notice(
+            "inventory_applying generation=\(inventory.generation) entries=\(inventory.entries.count)"
+        )
         guard inventoryEntriesAreUnique(inventory.entries) else { return }
         let previousCursor = inventoryCursorStore.load()
         guard shouldAccept(inventory, after: previousCursor) else { return }
@@ -492,7 +513,6 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 record.lastErrorCode = nil
                 record.lastErrorMessage = nil
                 record.state = .availableOnWatch
-                if activeTransferID == record.transferID { activeTransferID = nil }
                 sessionStartedTransferIDs.remove(record.transferID)
                 liveProgress[record.youtubeID] = nil
                 record.updatedAt = .now
@@ -620,18 +640,17 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         }
     }
 
-    private func startNextQueuedTransferIfPossible() async {
-        guard activeTransferID == nil, connectionStatus.canTransfer else { return }
-        while activeTransferID == nil {
+    private func drainQueuedTransfersIfPossible() async {
+        guard !isDrainingQueuedTransfers, connectionStatus.canTransfer else { return }
+        isDrainingQueuedTransfers = true
+        defer { isDrainingQueuedTransfers = false }
+
+        while connectionStatus.canTransfer {
             guard let record = fetchRecords()
                 .filter({ $0.state == .queued })
                 .sorted(by: { $0.queuedAt < $1.queuedAt })
                 .first else { return }
-            // Reserve the serial slot before awaiting the actor-backed
-            // snapshot store; multiple status/queue tasks may arrive together.
-            activeTransferID = record.transferID
             guard let prepared = await snapshots.preparedTransfer(transferID: record.transferID) else {
-                activeTransferID = nil
                 record.senderFailed = true
                 markFailed(
                     record,
@@ -641,20 +660,30 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 _ = persistChanges()
                 continue
             }
+            // Queue every prepared file with WatchConnectivity while the phone
+            // app is active. WCSession owns the durable background ordering, so
+            // later items do not depend on this process receiving the previous
+            // item's completion callback before suspension or termination.
+            guard connectionStatus.canTransfer else { return }
 
             record.state = .transferring
             record.senderFailed = false
             record.updatedAt = .now
             do {
+                WatchSyncLog.phoneService.notice(
+                    "enqueue_started transfer=\(record.transferID.uuidString, privacy: .public) revision=\(record.revision) youtube=\(record.youtubeID, privacy: .public)"
+                )
                 try transport.enqueueFile(
                     at: prepared.audioURL,
                     envelope: try envelope(for: record, fileKind: .audio, fileURL: prepared.audioURL)
                 )
             } catch {
+                WatchSyncLog.phoneService.error(
+                    "enqueue_failed transfer=\(record.transferID.uuidString, privacy: .public) code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+                )
                 transport.cancelFiles(transferID: record.transferID)
                 record.senderFailed = true
                 markFailed(record, code: "enqueue", message: error.localizedDescription)
-                activeTransferID = nil
                 sessionStartedTransferIDs.remove(record.transferID)
                 _ = persistChanges()
                 continue
@@ -679,12 +708,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 try modelContext.save()
                 sessionStartedTransferIDs.insert(record.transferID)
                 lastPersistenceError = nil
-                return
             } catch {
                 transport.cancelFiles(transferID: record.transferID)
                 record.senderFailed = true
                 markFailed(record, code: "enqueue", message: error.localizedDescription)
-                activeTransferID = nil
                 sessionStartedTransferIDs.remove(record.transferID)
                 _ = persistChanges()
             }
@@ -709,15 +736,12 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 }
                 reduceState(of: record)
                 if record.state == .transferring {
-                    activeTransferID = activeTransferID ?? record.transferID
                     updateReconciledAudioProgress(for: record, files: files)
                 }
             case .transferring where files.isEmpty && !sessionStartedTransferIDs.contains(record.transferID):
                 record.state = .reconciliationRequired
-                if activeTransferID == record.transferID { activeTransferID = nil }
                 liveProgress[record.youtubeID] = nil
             case .transferring:
-                activeTransferID = activeTransferID ?? record.transferID
                 updateReconciledAudioProgress(for: record, files: files)
             case .preparing:
                 record.state = .reconciliationRequired
@@ -750,7 +774,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         })
         let outstandingIDs = Set(latestOutstanding.map(\.key.transferID))
         await snapshots.removeOrphans(retaining: retainedRecordIDs.union(outstandingIDs))
-        await startNextQueuedTransferIfPossible()
+        await drainQueuedTransfersIfPossible()
     }
 
     private func completeEvent(for record: WatchTransferRecord) {
@@ -769,10 +793,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.audioDeliveryFinished && record.artworkDeliveryFinished
         )
         if senderFinished {
-            if activeTransferID == record.transferID { activeTransferID = nil }
             sessionStartedTransferIDs.remove(record.transferID)
             lastProgressSaveAt[record.transferID] = nil
-            scheduleNextQueuedTransferIfNeeded()
+            scheduleQueuedTransfersIfNeeded()
         }
         if record.state == .availableOnWatch || record.state == .removedFromWatch {
             let transferID = record.transferID
@@ -834,10 +857,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         }
     }
 
-    private func scheduleNextQueuedTransferIfNeeded() {
+    private func scheduleQueuedTransfersIfNeeded() {
         guard fetchRecords().contains(where: { $0.state == .queued }) else { return }
         Task { @MainActor [weak self] in
-            await self?.startNextQueuedTransferIfPossible()
+            await self?.drainQueuedTransfersIfPossible()
         }
     }
 

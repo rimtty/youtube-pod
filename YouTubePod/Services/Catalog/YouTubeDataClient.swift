@@ -67,7 +67,10 @@ actor YouTubeDataClient: YouTubeCatalogServing {
             ],
             credential: credential
         )
-        return try await videoDetails(ids: result.items.map(\.id.videoID), credential: credential)
+        return try await videoDetails(
+            ids: result.items.compactMap(\.id.videoID),
+            credential: credential
+        )
     }
 
     func subscriptionUploadsPage(
@@ -540,7 +543,7 @@ private struct Thumbnail: Decodable { let url: URL }
 private struct SearchListResponse: Decodable { let items: [SearchItem] }
 private struct SearchItem: Decodable { let id: SearchID }
 private struct SearchID: Decodable {
-    let videoID: String
+    let videoID: String?
     private enum CodingKeys: String, CodingKey { case videoID = "videoId" }
 }
 
