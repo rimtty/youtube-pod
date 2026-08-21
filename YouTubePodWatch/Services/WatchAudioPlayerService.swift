@@ -589,6 +589,28 @@ final class WatchAudioPlayerService {
 
     private func installAudioSessionObservers() {
         let center = NotificationCenter.default
+        if #available(watchOS 27.0, *) {
+            installModernAudioSessionObservers(center: center)
+        } else {
+            installLegacyAudioSessionObserver(center: center)
+        }
+        routeChangeObserver = center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let rawValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let routeWasLost = rawValue.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+                == .oldDeviceUnavailable
+            MainActor.assumeIsolated {
+                guard routeWasLost else { return }
+                self?.handleAudioRouteLost()
+            }
+        }
+    }
+
+    @available(watchOS 27.0, *)
+    private func installModernAudioSessionObservers(center: NotificationCenter) {
         interruptionObserver = center.addObserver(
             forName: AVAudioSession.didBecomeInactiveNotification,
             object: nil,
@@ -611,17 +633,31 @@ final class WatchAudioPlayerService {
                 self?.handleAudioSessionInterruptionEnded(shouldResume: shouldResume)
             }
         }
-        routeChangeObserver = center.addObserver(
-            forName: AVAudioSession.routeChangeNotification,
+    }
+
+    private func installLegacyAudioSessionObserver(center: NotificationCenter) {
+        interruptionObserver = center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            let rawValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
-            let routeWasLost = rawValue.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
-                == .oldDeviceUnavailable
+            let typeRawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let type = typeRawValue.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+            let optionsRawValue = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
+            let shouldResume = optionsRawValue.map {
+                AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume)
+            } ?? false
             MainActor.assumeIsolated {
-                guard routeWasLost else { return }
-                self?.handleAudioRouteLost()
+                switch type {
+                case .began:
+                    self?.handleAudioSessionInterruptionBegan()
+                case .ended:
+                    self?.handleAudioSessionInterruptionEnded(shouldResume: shouldResume)
+                case nil:
+                    break
+                @unknown default:
+                    break
+                }
             }
         }
     }

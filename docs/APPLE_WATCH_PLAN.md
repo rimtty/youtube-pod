@@ -207,7 +207,7 @@ Google認証失敗時のオフラインモードでも、ローカルライブ�
 
 ## Watchアプリ
 
-watchOS 27向けの軽量SwiftUIターゲットとして追加する。
+watchOS 26.0以降を対象にした軽量SwiftUIターゲットとして追加する。開発・回帰テストにはXcode 27とwatchOS 27 Simulatorを使用する。
 
 ### ライブラリ
 
@@ -236,7 +236,7 @@ Watch側にはGoogleSignIn、PythonKit、CPython、yt-dlp、YouTube APIクライ
 ### 既存ファイル
 
 - `project.yml`
-  - watchOS 27アプリ、Watch単体テスト、iOSへのWatchアプリ埋め込みを追加
+  - watchOS 26.0以降のアプリ、Watch単体テスト、iOSへのWatchアプリ埋め込みを追加
 - `YouTubePod/Domain/Protocols.swift`
   - `WatchTransferManaging`追加
 - `YouTubePod/Services/Library/AudioLibraryService.swift`
@@ -273,7 +273,7 @@ WatchConnectivity delegateはバックグラウンドスレッドで呼ばれる
 
 ### Phase 0: ターゲットと技術スパイク
 
-- watchOS 27ターゲットを作成し、iOSアプリへ埋め込む
+- watchOS 26.0以降のターゲットを作成し、iOSアプリへ埋め込む
 - iPhone／Watch両側でWCSessionをactivate
 - 1本の短いM4Aを`transferFile`で送る
 - Watch callback内で同期moveし、AVFoundation検証後に再生する
