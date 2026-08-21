@@ -10,7 +10,27 @@ struct WatchLibraryRow: View {
     let isCurrent: Bool
     let isPlaying: Bool
     let currentTime: TimeInterval
+    let playableAudioURL: (WatchSavedAudio) -> URL?
+    let reduceMotionOverride: Bool?
     let play: () -> Void
+
+    init(
+        audio: WatchSavedAudio,
+        isCurrent: Bool,
+        isPlaying: Bool,
+        currentTime: TimeInterval,
+        playableAudioURL: @escaping (WatchSavedAudio) -> URL? = watchPlayableAudioURL,
+        reduceMotionOverride: Bool? = nil,
+        play: @escaping () -> Void
+    ) {
+        self.audio = audio
+        self.isCurrent = isCurrent
+        self.isPlaying = isPlaying
+        self.currentTime = currentTime
+        self.playableAudioURL = playableAudioURL
+        self.reduceMotionOverride = reduceMotionOverride
+        self.play = play
+    }
 
     var body: some View {
         Group {
@@ -19,14 +39,18 @@ struct WatchLibraryRow: View {
                     rowContent
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("watch.library.row.\(audio.youtubeID)")
                 .accessibilityLabel(accessibilityLabel)
+                .accessibilityValue(accessibilityValue)
                 .accessibilityHint(
                     "ダブルタップして再生画面を開く。左にスワイプすると削除できます"
                 )
             } else {
                 rowContent
                     .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("watch.library.row.\(audio.youtubeID)")
                     .accessibilityLabel(accessibilityLabel)
+                    .accessibilityValue(accessibilityValue)
                     .accessibilityHint("左にスワイプすると削除できます")
             }
         }
@@ -67,8 +91,29 @@ struct WatchLibraryRow: View {
         return parts.joined(separator: "、")
     }
 
+    private var accessibilityValue: String {
+        let playbackValue: String
+        if !isPlayable {
+            playbackValue = "利用できません"
+        } else if showsPlaybackProgress {
+            playbackValue = "\(playbackPercentage)%"
+        } else {
+            playbackValue = "新着"
+        }
+#if DEBUG
+        if reduceMotionOverride == true {
+            return "\(playbackValue), static"
+        }
+#endif
+        return playbackValue
+    }
+
     private var isPlayable: Bool {
-        watchPlayableAudioURL(for: audio) != nil
+        playableAudioURL(audio) != nil
+    }
+
+    private var effectiveReduceMotion: Bool {
+        reduceMotionOverride ?? reduceMotion
     }
 
     private var rowContent: some View {
@@ -102,7 +147,7 @@ struct WatchLibraryRow: View {
                                     .variableColor.iterative,
                                     isActive: WatchUIPresentation.shouldAnimatePlaybackSymbol(
                                         isPlaying: isPlaying,
-                                        reduceMotion: reduceMotion
+                                        reduceMotion: effectiveReduceMotion
                                     )
                                 )
                                 .accessibilityHidden(true)

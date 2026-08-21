@@ -124,6 +124,18 @@ targets:
       base:
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: YES
+  YouTubePodWatchUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources:
+      - path: YouTubePodWatchUITests
+    dependencies:
+      - target: YouTubePodWatch
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: YouTubePodWatch
 schemes:
   YouTubePod:
     build:
@@ -154,3 +166,11 @@ schemes:
     test:
       targets:
         - YouTubePodWatchTests
+  YouTubePodWatchUI:
+    build:
+      targets:
+        YouTubePodWatch: all
+        YouTubePodWatchUITests: [test]
+    test:
+      targets:
+        - YouTubePodWatchUITests

@@ -6,10 +6,29 @@ struct YouTubePodWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     private let container: ModelContainer
+    private let runsProductionServices: Bool
+    private let playableAudioURL: (WatchSavedAudio) -> URL?
+    private let libraryFileURL: (String) -> URL?
     @State private var receiver: WatchSessionReceiver
     @State private var player: WatchAudioPlayerService
 
     init() {
+#if DEBUG
+        if WatchUITestFixture.isRequested {
+            do {
+                let fixture = try WatchUITestFixture.makeComposition()
+                self.container = fixture.container
+                self.runsProductionServices = false
+                self.playableAudioURL = fixture.playableAudioURL
+                self.libraryFileURL = fixture.libraryFileURL
+                _receiver = State(initialValue: fixture.receiver)
+                _player = State(initialValue: fixture.player)
+                return
+            } catch {
+                fatalError("Watch UI test fixture initialization failed: \(error)")
+            }
+        }
+#endif
         do {
             let container = try ModelContainer(
                 for: WatchSavedAudio.self,
@@ -39,6 +58,9 @@ struct YouTubePodWatchApp: App {
                 }
             )
             self.container = container
+            self.runsProductionServices = true
+            self.playableAudioURL = watchPlayableAudioURL
+            self.libraryFileURL = watchLibraryFileURL
             _receiver = State(initialValue: receiver)
             _player = State(initialValue: player)
         } catch {
@@ -54,13 +76,25 @@ struct YouTubePodWatchApp: App {
             WatchRootView(
                 player: player,
                 receiver: receiver,
+                playableAudioURL: playableAudioURL,
+                libraryFileURL: libraryFileURL,
+                reduceMotionOverride: watchUITestReduceMotionOverride,
                 onDelete: { saved in
                     Task { @MainActor in
                         _ = await receiver.deleteFromWatch(saved)
                     }
                 }
             )
-                .task { receiver.start() }
+                .applyingWatchUITestEnvironment()
+                .task {
+#if DEBUG
+                    if !runsProductionServices {
+                        await WatchUITestFixture.driveProgress(player: player)
+                        return
+                    }
+#endif
+                    receiver.start()
+                }
                 .onChange(of: scenePhase) {
                     guard scenePhase != .active else { return }
                     player.persistPosition()
@@ -68,7 +102,36 @@ struct YouTubePodWatchApp: App {
         }
         .modelContainer(container)
         .backgroundTask(.watchConnectivity) { [receiver] in
+            guard runsProductionServices else { return }
             await receiver.handleConnectivityBackgroundTask()
         }
     }
+}
+
+private extension View {
+    @ViewBuilder
+    func applyingWatchUITestEnvironment() -> some View {
+#if DEBUG
+        if WatchUITestFixture.isRequested {
+            self
+                .environment(
+                    \.dynamicTypeSize,
+                    WatchUITestFixture.usesAccessibilitySize ? .accessibility5 : .large
+                )
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
+}
+
+@MainActor
+private var watchUITestReduceMotionOverride: Bool? {
+#if DEBUG
+    WatchUITestFixture.isRequested && WatchUITestFixture.reducesMotion ? true : nil
+#else
+    nil
+#endif
 }

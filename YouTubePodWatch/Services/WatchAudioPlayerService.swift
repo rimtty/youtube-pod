@@ -314,6 +314,37 @@ final class WatchAudioPlayerService {
         }
     }
 
+#if DEBUG
+    /// Seeds the observable playback snapshot used by Watch UI tests without
+    /// touching AVPlayer, AVAudioSession, or remote-command playback state.
+    func installUITestFixture(
+        item: WatchPlaybackItem,
+        currentTime: TimeInterval,
+        isPlaying: Bool
+    ) {
+        activationRequestID += 1
+        seekRequestID += 1
+        pendingSkipTask?.cancel()
+        pendingSkipTask = nil
+        currentItem = item
+        queue = [item]
+        index = 0
+        duration = item.duration
+        self.currentTime = min(max(currentTime, 0), item.duration)
+        lastPersistedTime = self.currentTime
+        hasStartedCurrentItem = true
+        self.isPlaying = isPlaying
+        playbackError = nil
+    }
+
+    /// Moves only the observable fixture clock. The real periodic AVPlayer
+    /// observer remains authoritative in every non-fixture composition.
+    func updateUITestFixtureProgress(to currentTime: TimeInterval) {
+        guard currentItem != nil else { return }
+        self.currentTime = min(max(currentTime, 0), duration)
+    }
+#endif
+
     /// Exposed for deterministic notification-path testing. Production calls
     /// this only from the current AVPlayerItem's end notification.
     func handlePlaybackCompletion() {

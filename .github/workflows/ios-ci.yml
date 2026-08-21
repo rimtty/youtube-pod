@@ -17,7 +17,7 @@ jobs:
   test:
     name: Xcode 27 tests
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out source
@@ -38,6 +38,9 @@ jobs:
       - name: Run Apple Watch Series 9+ simulator tests
         run: ./scripts/verify_watch.sh
 
+      - name: Verify Apple Watch Release isolation
+        run: ./scripts/verify_watch_release_isolation.sh
+
       - name: Run static analysis
         run: |
           xcodebuild analyze \
@@ -45,3 +48,17 @@ jobs:
             -scheme YouTubePod \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath /tmp/youtubepod-analyze-derived-data
+          xcodebuild analyze \
+            -project YouTubePod.xcodeproj \
+            -scheme YouTubePodWatch \
+            -destination 'generic/platform=watchOS Simulator' \
+            -derivedDataPath /tmp/youtubepod-watch-analyze-derived-data
+
+      - name: Preserve Apple Watch test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-watch-xcresults
+          path: /tmp/youtubepod-watch-verify-results/**/*.xcresult
+          if-no-files-found: warn
+          retention-days: 14
