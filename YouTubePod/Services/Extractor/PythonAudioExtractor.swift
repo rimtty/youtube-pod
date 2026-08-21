@@ -4,8 +4,12 @@ import Foundation
 
 actor PythonAudioExtractor: AudioExtracting {
     private static let workDirectoryPrefix = "YouTubePod-"
-    private var cancellationURL: URL?
-    private let worker = DispatchQueue(label: "com.rimtty.YouTubePod.python", qos: .userInitiated)
+    private var cancellationURLs: [String: URL] = [:]
+    private let worker = DispatchQueue(
+        label: "com.rimtty.YouTubePod.python",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
 
     nonisolated static func removeStaleWorkingDirectories() {
         let fileManager = FileManager.default
@@ -25,13 +29,25 @@ actor PythonAudioExtractor: AudioExtracting {
         from url: URL,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> ExtractedAudio {
+        try await extract(
+            requestID: UUID().uuidString,
+            from: url,
+            progress: progress
+        )
+    }
+
+    func extract(
+        requestID: String,
+        from url: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ExtractedAudio {
         let runID = UUID().uuidString
         let workDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(Self.workDirectoryPrefix)\(runID)", isDirectory: true)
         let cancellation = workDirectory.appendingPathComponent("cancel")
         let progressFile = workDirectory.appendingPathComponent("progress.json")
         try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        cancellationURL = cancellation
+        cancellationURLs[requestID] = cancellation
 
         let pollingTask = Task.detached {
             while !Task.isCancelled {
@@ -44,7 +60,9 @@ actor PythonAudioExtractor: AudioExtracting {
         }
         defer {
             pollingTask.cancel()
-            cancellationURL = nil
+            if cancellationURLs[requestID] == cancellation {
+                cancellationURLs.removeValue(forKey: requestID)
+            }
         }
 
         do {
@@ -74,7 +92,13 @@ actor PythonAudioExtractor: AudioExtracting {
     }
 
     func cancel() async {
-        guard let cancellationURL else { return }
+        for cancellationURL in cancellationURLs.values {
+            FileManager.default.createFile(atPath: cancellationURL.path, contents: Data())
+        }
+    }
+
+    func cancel(requestID: String) async {
+        guard let cancellationURL = cancellationURLs[requestID] else { return }
         FileManager.default.createFile(atPath: cancellationURL.path, contents: Data())
     }
 

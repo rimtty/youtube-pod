@@ -12,6 +12,16 @@ enum WatchTransferState: String, Codable, CaseIterable, Sendable {
     case failed
     case reconciliationRequired
     case removedFromWatch
+
+    var isPendingTransfer: Bool {
+        switch self {
+        case .preparing, .queued, .transferring, .awaitingWatchConfirmation:
+            true
+        case .availableOnWatch, .cancelling, .deletionPending, .failed,
+             .reconciliationRequired, .removedFromWatch:
+            false
+        }
+    }
 }
 
 @Model

@@ -79,6 +79,31 @@ final class YouTubeDataClientTests: XCTestCase {
         XCTAssertEqual(videos.first?.duration, 120)
     }
 
+    func testSearchIgnoresNonVideoItemsReturnedByYouTube() async throws {
+        let requestCount = LockedCounter()
+        URLProtocolStub.handler = { request in
+            requestCount.increment()
+            let payload: String
+            switch request.url?.path {
+            case "/youtube/v3/search":
+                payload = #"{"items":[{"id":{"kind":"youtube#channel","channelId":"channel-1"}},{"id":{"kind":"youtube#video","videoId":"searchvid01"}}]}"#
+            case "/youtube/v3/videos":
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+                XCTAssertEqual(query?.first { $0.name == "id" }?.value, "searchvid01")
+                payload = #"{"items":[{"id":"searchvid01","snippet":{"title":"Search result","channelTitle":"Channel","publishedAt":"2026-08-15T00:00:00Z","thumbnails":{}},"statistics":{"viewCount":"99"},"contentDetails":{"duration":"PT2M"}}]}"#
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = makeClient()
+
+        let videos = try await client.searchVideos(query: "中村さんそ")
+
+        XCTAssertEqual(requestCount.value, 2)
+        XCTAssertEqual(videos.map(\.id), ["searchvid01"])
+    }
+
     func testBlankSearchDoesNotSendARequest() async throws {
         URLProtocolStub.handler = { _ in
             XCTFail("Blank searches must not consume YouTube API quota")

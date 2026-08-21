@@ -61,7 +61,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertNil(fixture.service.liveProgress[source.youtubeID])
     }
 
-    func testImportedAcknowledgementArrivingBeforeSenderFinishDoesNotStallQueue() async throws {
+    func testImportedAcknowledgementArrivingBeforeSenderFinishKeepsOtherTransferQueuedInWCSession() async throws {
         let fixture = try makeFixture()
         let firstSource = try makeSource(id: "ackfirst001", artwork: false)
         let secondSource = try makeSource(id: "ackfirst002", artwork: false)
@@ -76,16 +76,14 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             outcome: .imported
         )))
         XCTAssertEqual(record(firstSource.youtubeID, in: fixture.context)?.state, .transferring)
-        XCTAssertEqual(fixture.transport.sent.count, 1)
+        XCTAssertEqual(fixture.transport.sent.count, 2)
 
         fixture.transport.emit(.fileFinished(
             WatchTransferKey(transferID: first.transferID, fileKind: .audio),
             nil
         ))
-        try await waitUntil { fixture.transport.sent.count == 2 }
-
         XCTAssertEqual(record(firstSource.youtubeID, in: fixture.context)?.state, .availableOnWatch)
-        XCTAssertEqual(fixture.transport.sent.last?.envelope.youtubeID, secondSource.youtubeID)
+        XCTAssertEqual(record(secondSource.youtubeID, in: fixture.context)?.state, .transferring)
     }
 
     func testFailedAcknowledgementBeforeLateSenderCallbackRemainsFailedAndAdvancesQueue() async throws {
@@ -103,7 +101,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             outcome: .failed,
             message: "Watch import failed"
         )))
-        try await waitUntil { fixture.transport.sent.count == 2 }
+        XCTAssertEqual(fixture.transport.sent.count, 2)
         fixture.transport.emit(.fileFinished(
             WatchTransferKey(transferID: first.transferID, fileKind: .audio),
             nil
@@ -155,20 +153,17 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(fixture.transport.sent.count, 2)
     }
 
-    func testTransfersAreQueuedSerially() async throws {
+    func testAllTransfersAreSubmittedToWCSessionForBackgroundDelivery() async throws {
         let fixture = try makeFixture()
         try await fixture.service.enqueue(makeSource(id: "transfer005", artwork: false))
         try await fixture.service.enqueue(makeSource(id: "transfer006", artwork: false))
-        XCTAssertEqual(fixture.transport.sent.count, 1)
 
-        let first = try XCTUnwrap(fixture.transport.sent.first?.envelope)
-        fixture.transport.emit(.fileFinished(
-            WatchTransferKey(transferID: first.transferID, fileKind: .audio),
-            nil
-        ))
-        try await waitUntil { fixture.transport.sent.count == 2 }
-
+        XCTAssertEqual(fixture.transport.sent.count, 2)
         XCTAssertEqual(fixture.transport.sent.map(\.envelope.youtubeID), ["transfer005", "transfer006"])
+        XCTAssertEqual(
+            fetchRecords(fixture.context).filter { $0.state == .transferring }.count,
+            2
+        )
     }
 
     func testArtworkFailureDoesNotFailCompletedAudioDelivery() async throws {
@@ -611,25 +606,31 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertTrue(fixture.transport.sent.isEmpty)
     }
 
-    func testReactivationDoesNotLeaveMissedSenderCompletionBlockingQueue() async throws {
+    func testReactivationReconcilesEachSubmittedTransferIndependently() async throws {
         let fixture = try makeFixture()
         let firstSource = try makeSource(id: "reactivate1", artwork: false)
         let secondSource = try makeSource(id: "reactivate2", artwork: false)
         try await fixture.service.enqueue(firstSource)
         try await fixture.service.enqueue(secondSource)
-        XCTAssertEqual(fixture.transport.sent.count, 1)
+        XCTAssertEqual(fixture.transport.sent.count, 2)
 
-        // Simulate WCSession losing its didFinish callback across a session
-        // transition even though no file transfer remains outstanding.
-        fixture.transport.outstanding = []
+        // Simulate one lost didFinish callback while the other transfer remains
+        // in WCSession's durable background queue.
+        let secondTransferID = try XCTUnwrap(
+            fixture.transport.sent.first { $0.envelope.youtubeID == secondSource.youtubeID }?.envelope.transferID
+        )
+        fixture.transport.outstanding.removeAll { $0.key.transferID != secondTransferID }
         fixture.transport.emit(.statusChanged(fixture.transport.status))
-        try await waitUntil { fixture.transport.sent.count == 2 }
+        try await waitUntil {
+            self.record(firstSource.youtubeID, in: fixture.context)?.state == .reconciliationRequired
+        }
 
         XCTAssertEqual(
             record(firstSource.youtubeID, in: fixture.context)?.state,
             .reconciliationRequired
         )
-        XCTAssertEqual(fixture.transport.sent.last?.envelope.youtubeID, secondSource.youtubeID)
+        XCTAssertEqual(record(secondSource.youtubeID, in: fixture.context)?.state, .transferring)
+        XCTAssertEqual(fixture.transport.sent.count, 2)
     }
 
     func testActivationUsesPersistedWatchConfirmationWhenSenderCallbackWasLost() async throws {

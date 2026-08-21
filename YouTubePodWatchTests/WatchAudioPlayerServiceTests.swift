@@ -80,6 +80,33 @@ final class WatchAudioPlayerServiceTests: XCTestCase {
         XCTAssertEqual(player.currentTime, 75)
     }
 
+    func testPlaybackStallKeepsIntendedPlaybackActiveWithoutReactivatingSession() {
+        let session = TestWatchAudioSession()
+        let player = makePlayer(session: session)
+        let item = playbackItem(id: "watchplay-stall", duration: 120, resume: 10)
+        player.play(item, queue: [item])
+
+        player.handlePlaybackStalled()
+
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(session.activationCount, 1)
+        XCTAssertNil(player.playbackError)
+    }
+
+    func testSelectingCurrentItemDoesNotReloadOrRestartPlayback() {
+        let session = TestWatchAudioSession()
+        let player = makePlayer(session: session)
+        let item = playbackItem(id: "watchplay-current", duration: 120, resume: 10)
+        player.play(item, queue: [item])
+        player.seek(to: 41)
+
+        player.play(item, queue: [item])
+
+        XCTAssertEqual(session.activationCount, 1)
+        XCTAssertEqual(player.currentTime, 41)
+        XCTAssertTrue(player.isPlaying)
+    }
+
     func testPreviousRestartsCurrentBeforeMovingBackAndNextNavigatesQueue() {
         let player = makePlayer()
         let first = playbackItem(id: "watchplay05", duration: 100)

@@ -19,6 +19,19 @@ final class DomainModelTests: XCTestCase {
         XCTAssertNotEqual(DownloadPhase.failed("quota"), .failed("offline"))
     }
 
+    func testOnlyDeliveryInFlightWatchStatesCountAsPendingTransfers() {
+        let pending: Set<WatchTransferState> = [
+            .preparing,
+            .queued,
+            .transferring,
+            .awaitingWatchConfirmation,
+        ]
+
+        for state in WatchTransferState.allCases {
+            XCTAssertEqual(state.isPendingTransfer, pending.contains(state), "Unexpected state: \(state)")
+        }
+    }
+
     func testVideoSummaryBuildsCanonicalWatchURL() {
         let video = makeVideoSummary(id: "dQw4w9WgXcQ")
 

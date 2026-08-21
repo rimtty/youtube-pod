@@ -89,7 +89,17 @@ struct WatchTransfersView: View {
     }
 
     private var visibleRecords: [WatchTransferRecord] {
-        records.filter { $0.state != .removedFromWatch }
+        records
+            .filter { $0.state != .removedFromWatch }
+            .sorted { lhs, rhs in
+                if lhs.state.isPendingTransfer != rhs.state.isPendingTransfer {
+                    return lhs.state.isPendingTransfer
+                }
+                if lhs.state.isPendingTransfer {
+                    return lhs.queuedAt < rhs.queuedAt
+                }
+                return lhs.updatedAt > rhs.updatedAt
+            }
     }
 
     private var deletionPresented: Binding<Bool> {
@@ -386,7 +396,7 @@ private struct WatchTransferRow: View {
                 Spacer(minLength: 0)
             }
 
-            if record.state.isTransferActiveForDisplay {
+        if record.state.isPendingTransfer {
                 ProgressView(value: progress) {
                     Text("\(Int((progress * 100).rounded()))%")
                         .monospacedDigit()
@@ -405,6 +415,7 @@ private struct WatchTransferRow: View {
             }
 
             actionBar
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(12)
         .podCard()
@@ -494,18 +505,6 @@ private struct WatchTransferRow: View {
         case .availableOnWatch: PodPalette.sky
         case .failed, .reconciliationRequired: .red
         default: PodPalette.violet
-        }
-    }
-}
-
-private extension WatchTransferState {
-    var isTransferActiveForDisplay: Bool {
-        switch self {
-        case .preparing, .queued, .transferring, .awaitingWatchConfirmation:
-            true
-        case .availableOnWatch, .cancelling, .deletionPending, .failed,
-             .reconciliationRequired, .removedFromWatch:
-            false
         }
     }
 }
