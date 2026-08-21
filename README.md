@@ -13,7 +13,7 @@ iOS 27 / SwiftUI で動作する、技術検証用のオンデバイス音声ラ
 4. `open YouTubePod.xcodeproj`
 5. Signing Team と Bundle ID を自分の環境に合わせ、iOS 27 実機で実行
 
-Python 3.14、`yt-dlp 2026.07.04`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `PythonRuntime/requirements.lock` の固定バージョンを使って `bootstrap.sh` が準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。
+Python 3.14、`yt-dlp 2026.08.19`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `PythonRuntime/requirements.lock` の固定バージョンを使って `bootstrap.sh` が準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。
 
 同梱CPythonのSimulator拡張はarm64向けです。Xcode 27をApple Silicon Macで使用してください。
 
