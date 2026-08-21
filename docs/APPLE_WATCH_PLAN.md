@@ -337,7 +337,21 @@ WatchConnectivity delegateはバックグラウンドスレッドで呼ばれる
 - Watch削除後に音声、画像、SwiftDataがすべて消える
 - iPhoneの元音声削除後もWatchコピーを再生できる
 
-WatchConnectivityのファイル受信はSimulatorでは最終検証できないため、ペアリング済みiPhone／Apple Watchを必須とする。
+WatchConnectivityの`transferFile`とファイル受信callbackはSimulatorで動作しないため、実配送の最終検証にはペアリング済みiPhone／Apple Watchを必須とする。ローカルでは`./scripts/run_watch_sync_simulator.sh`を使い、DEBUG専用fixtureで配送境界だけを置き換え、受信ステージング、M4A検証、SwiftData保存、ACK／inventory生成、Watch UI反映をSimulator上で確認する。
+
+### 同期ログの採取
+
+同期処理はunified loggingのsubsystem `com.rimtty.YouTubePod.watch-sync`へ、タイトルやファイルパスを含めずに記録する。`transferID`、`revision`、YouTube IDを相関キーとして、次の順序をiPhoneとWatchで照合する。
+
+1. iPhone: `prepare_completed`、`file_enqueued`
+2. iPhone: `file_finished result=delivered`
+3. Watch: `file_staged`、`file_imported result=imported`
+4. Watch: `ack_enqueued`、`inventory_published`
+5. iPhone: `ack_received`、`ack_correlated`
+
+Simulatorの直近ログは、fixture実行後に`./scripts/collect_watch_sync_simulator_logs.sh 15`で`/tmp`へ書き出す。
+
+実機ではmacOSのConsoleを開き、接続済みiPhoneとApple Watchをそれぞれ選択して、検索欄へ`subsystem:com.rimtty.YouTubePod.watch-sync`を入力する。ログ収集を開始してから転送を再現し、両端末のログを保存する。Apple WatchがConsoleへ表示されない場合は、XcodeからWatch schemeを実機起動し、同じsubsystemでDebug consoleを絞り込む。失敗調査では、同じ`transferID`の最後のイベントと、その直後の`.error`を共有する。
 
 ## 合格条件
 

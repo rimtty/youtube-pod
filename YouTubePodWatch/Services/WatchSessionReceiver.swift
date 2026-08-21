@@ -54,6 +54,7 @@ final class WatchSessionReceiver {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        WatchSyncLog.watchReceiver.notice("receiver_started")
 
         peer.stagedFileHandler = { [weak self] _ in
             self?.requestSynchronization()
@@ -93,6 +94,7 @@ final class WatchSessionReceiver {
     /// idle synchronization boundary. Returning from this method completes the
     /// system-owned background task.
     func handleConnectivityBackgroundTask() async {
+        WatchSyncLog.watchReceiver.notice("background_task_started")
         start()
         do {
             try await peer.waitForActivation()
@@ -110,10 +112,15 @@ final class WatchSessionReceiver {
             try await synchronizeForBackgroundTask()
             await waitUntilSynchronizationIdle()
             try Task.checkCancellation()
+            WatchSyncLog.watchReceiver.notice("background_task_completed")
         } catch is CancellationError {
+            WatchSyncLog.watchReceiver.notice("background_task_cancelled")
             cancelSynchronizationForSuspension()
             await waitUntilSynchronizationIdle()
         } catch {
+            WatchSyncLog.watchReceiver.error(
+                "background_task_failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
             // An activation/drain failure can race the startup synchronization
             // scheduled by start(). Do not tell the system-owned background
             // task it is complete while that unstructured operation is still
@@ -166,6 +173,7 @@ final class WatchSessionReceiver {
     }
 
     private func performSynchronizationPass() async -> Bool {
+        WatchSyncLog.watchReceiver.notice("sync_pass_started")
         do {
             try Task.checkCancellation()
 
@@ -173,7 +181,9 @@ final class WatchSessionReceiver {
             // acknowledgements that were durably committed by an earlier pass.
             _ = flushAcknowledgements()
 
-            for stagedCommand in try stager.listStagedCommands() {
+            let stagedCommands = try stager.listStagedCommands()
+            WatchSyncLog.watchReceiver.notice("commands_found count=\(stagedCommands.count)")
+            for stagedCommand in stagedCommands {
                 try Task.checkCancellation()
                 invalidatePlaybackItem(stagedCommand.command.youtubeID)
                 let result = library.delete(stagedCommand.command)
@@ -188,6 +198,7 @@ final class WatchSessionReceiver {
             }
 
             let stagedFiles = try stager.listStagedFiles()
+            WatchSyncLog.watchReceiver.notice("files_found count=\(stagedFiles.count)")
             for stagedFile in stagedFiles {
                 try Task.checkCancellation()
                 if stagedFile.envelope.fileKind == .audio {
@@ -196,6 +207,9 @@ final class WatchSessionReceiver {
                     invalidatePlaybackItem(stagedFile.envelope.youtubeID)
                 }
                 let result = await library.importStagedFile(stagedFile)
+                WatchSyncLog.watchReceiver.notice(
+                    "file_imported transfer=\(stagedFile.envelope.transferID.uuidString, privacy: .public) revision=\(stagedFile.envelope.revision) youtube=\(stagedFile.envelope.youtubeID, privacy: .public) kind=\(stagedFile.envelope.fileKind.rawValue, privacy: .public) result=\(String(describing: result), privacy: .public)"
+                )
                 // Background expiration is retryable, not a terminal transfer
                 // failure. Keep the durable receipt and do not flush an ACK.
                 if result == .cancelled { return false }
@@ -222,10 +236,15 @@ final class WatchSessionReceiver {
                 )
             )
             lastErrorMessage = nil
+            WatchSyncLog.watchReceiver.notice("sync_pass_completed result=success")
             return true
         } catch is CancellationError {
+            WatchSyncLog.watchReceiver.notice("sync_pass_completed result=cancelled")
             return false
         } catch {
+            WatchSyncLog.watchReceiver.error(
+                "sync_pass_completed result=failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
             lastErrorMessage = error.localizedDescription
             return false
         }

@@ -28,6 +28,20 @@ struct YouTubePodWatchApp: App {
                 fatalError("Watch UI test fixture initialization failed: \(error)")
             }
         }
+        if WatchSimulatorSyncFixture.isRequested {
+            do {
+                let fixture = try WatchSimulatorSyncFixture.makeComposition()
+                self.container = fixture.container
+                self.runsProductionServices = false
+                self.playableAudioURL = fixture.playableAudioURL
+                self.libraryFileURL = fixture.libraryFileURL
+                _receiver = State(initialValue: fixture.receiver)
+                _player = State(initialValue: fixture.player)
+                return
+            } catch {
+                fatalError("Watch Simulator sync fixture initialization failed: \(error)")
+            }
+        }
 #endif
         do {
             let container = try ModelContainer(
@@ -88,7 +102,7 @@ struct YouTubePodWatchApp: App {
                 .applyingWatchUITestEnvironment()
                 .task {
 #if DEBUG
-                    if !runsProductionServices {
+                    if WatchUITestFixture.isRequested {
                         await WatchUITestFixture.driveProgress(player: player)
                         return
                     }

@@ -173,6 +173,7 @@ struct WatchRootView: View {
                 in: Capsule()
             )
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("watch.receiver.receiving")
             .accessibilityLabel("iPhoneから音声を受信中")
         } else if let message = receiver.lastErrorMessage {
             if WatchUIPresentation.receiverErrorLayout(

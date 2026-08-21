@@ -25,11 +25,15 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
 
     func activate() {
         guard driver.isSupported else {
+            WatchSyncLog.phoneTransport.error("activate unsupported")
             eventHandler?(.statusChanged(.unsupported))
             return
         }
         driver.installDelegate(self)
         if driver.activationState == .activated {
+            WatchSyncLog.phoneTransport.notice(
+                "activate already_active paired=\(self.driver.isPaired) installed=\(self.driver.isWatchAppInstalled)"
+            )
             eventHandler?(.statusChanged(status))
             emitInventory(from: driver.receivedApplicationContext)
             return
@@ -41,6 +45,7 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
             isPaired: nil,
             isWatchAppInstalled: nil
         )))
+        WatchSyncLog.phoneTransport.notice("activate requested")
         driver.activate()
     }
 
@@ -63,6 +68,9 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         guard driver.isSupported else { throw WatchConnectivityAdapterError.unsupported }
         guard status.canTransfer else { throw WatchConnectivityAdapterError.unavailable }
         let transfer = try driver.transferFile(url, metadata: envelope.metadata())
+        WatchSyncLog.phoneTransport.notice(
+            "file_enqueued transfer=\(envelope.transferID.uuidString, privacy: .public) revision=\(envelope.revision) youtube=\(envelope.youtubeID, privacy: .public) kind=\(envelope.fileKind.rawValue, privacy: .public) bytes=\(envelope.fileSize)"
+        )
         observeProgress(of: transfer, envelope: envelope)
     }
 
@@ -76,6 +84,9 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         guard driver.isSupported else { throw WatchConnectivityAdapterError.unsupported }
         guard status.canTransfer else { throw WatchConnectivityAdapterError.unavailable }
         try driver.updateApplicationContext(request.applicationContext())
+        WatchSyncLog.phoneTransport.notice(
+            "inventory_requested request=\(request.requestID.uuidString, privacy: .public)"
+        )
     }
 
     func cancelFiles(transferID: UUID) {
@@ -128,6 +139,9 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         succeeded: Bool,
         inventory: WatchInventorySnapshot?
     ) {
+        WatchSyncLog.phoneTransport.notice(
+            "activation_completed success=\(succeeded) can_transfer=\(self.status.canTransfer)"
+        )
         eventHandler?(.statusChanged(status))
         guard succeeded, let inventory else { return }
         eventHandler?(.inventory(inventory))
@@ -239,6 +253,11 @@ extension WCSessionAdapter: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
+        if let error {
+            WatchSyncLog.phoneTransport.error(
+                "activation_callback_failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
+        }
         let succeeded = activationState == .activated && error == nil
         let inventory: WatchInventorySnapshot?
         if succeeded,
@@ -284,6 +303,17 @@ extension WCSessionAdapter: WCSessionDelegate {
             metadata: fileTransfer.file.metadata ?? [:],
             error: error
         ) else { return }
+        if case let .fileFinished(key, failure) = event {
+            if let failure {
+                WatchSyncLog.phoneTransport.error(
+                    "file_finished transfer=\(key.transferID.uuidString, privacy: .public) kind=\(key.fileKind.rawValue, privacy: .public) result=failed code=\(failure.code, privacy: .public) retryable=\(failure.isRetryable)"
+                )
+            } else {
+                WatchSyncLog.phoneTransport.notice(
+                    "file_finished transfer=\(key.transferID.uuidString, privacy: .public) kind=\(key.fileKind.rawValue, privacy: .public) result=delivered"
+                )
+            }
+        }
         Task { @MainActor [weak self] in
             self?.emit(event)
         }
@@ -291,6 +321,11 @@ extension WCSessionAdapter: WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         guard let event = Self.normalizedAcknowledgementEvent(userInfo: userInfo) else { return }
+        if case let .acknowledgement(acknowledgement) = event {
+            WatchSyncLog.phoneTransport.notice(
+                "ack_received transfer=\(acknowledgement.transferID.uuidString, privacy: .public) revision=\(acknowledgement.revision) youtube=\(acknowledgement.youtubeID, privacy: .public) outcome=\(acknowledgement.outcome.rawValue, privacy: .public)"
+            )
+        }
         Task { @MainActor [weak self] in
             self?.emit(event)
         }
@@ -303,6 +338,11 @@ extension WCSessionAdapter: WCSessionDelegate {
         guard let event = Self.normalizedInventoryEvent(
             applicationContext: applicationContext
         ) else { return }
+        if case let .inventory(inventory) = event {
+            WatchSyncLog.phoneTransport.notice(
+                "inventory_received generation=\(inventory.generation) entries=\(inventory.entries.count)"
+            )
+        }
         Task { @MainActor [weak self] in
             self?.emit(event)
         }

@@ -7,6 +7,7 @@ final class YouTubePodWatchUITests: XCTestCase {
         static let detailedReceiverError = "watch.receiver.error.detailed"
         static let playableRow = "watch.library.row.uitest00001"
         static let missingFileRow = "watch.library.row.uitest00002"
+        static let simulatorSyncRow = "watch.library.row.simulator01"
     }
 
     override func setUpWithError() throws {
@@ -77,6 +78,19 @@ final class YouTubePodWatchUITests: XCTestCase {
             waitForValueContaining("static", on: currentRow, timeout: 8),
             "Playback decoration must stay static when Reduce Motion is enabled."
         )
+    }
+
+    func testSimulatorSyncFixtureImportsAudioThroughProductionReceivePipeline() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--watch-sync-simulator-fixture"]
+        app.launch()
+
+        let row = app.buttons[AccessibilityID.simulatorSyncRow]
+        XCTAssertTrue(
+            row.waitForExistence(timeout: 12),
+            "The Simulator delivery boundary must feed the production staging, validation, persistence, and library UI pipeline."
+        )
+        XCTAssertEqual(row.value as? String, "新着")
     }
 
     private func launchFixture(additionalArguments: [String] = []) -> XCUIApplication {

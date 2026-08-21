@@ -64,11 +64,15 @@ typeset -a fixture_sentinels=(
     '--watch-ui-test-fixture'
     '--watch-ui-test-accessibility-size'
     '--watch-ui-test-reduce-motion'
+    '--watch-sync-simulator-fixture'
     'WatchUITestFixture'
+    'WatchSimulatorSyncFixture'
     'YOUTUBEPOD_WATCH_UI_FIXTURE_SENTINEL'
+    'YOUTUBEPOD_WATCH_SIMULATOR_SYNC_FIXTURE_SENTINEL'
     'uitest00001'
     'uitest00002'
     'watch.motion.probe'
+    'simulator01'
 )
 
 if [[ -n ${YOUTUBEPOD_WATCH_FIXTURE_SENTINELS:-} ]]; then

@@ -56,6 +56,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        WatchSyncLog.phoneService.notice("service_started")
         transport.eventHandler = { [weak self] event in
             self?.handle(event)
         }
@@ -92,6 +93,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         let previousRevision = previous?.revision
         let transferID = UUID()
         let revision = max(1, (previous?.revision ?? 0) + 1)
+        WatchSyncLog.phoneService.notice(
+            "prepare_started transfer=\(transferID.uuidString, privacy: .public) revision=\(revision) youtube=\(source.youtubeID, privacy: .public)"
+        )
         let record: WatchTransferRecord
         if let previous {
             record = previous
@@ -132,7 +136,13 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         do {
             prepared = try await snapshots.prepare(source: source, transferID: transferID)
             record.sourceFileSize = try fileSize(at: prepared.audioURL)
+            WatchSyncLog.phoneService.notice(
+                "prepare_completed transfer=\(transferID.uuidString, privacy: .public) bytes=\(record.sourceFileSize) artwork=\(prepared.artworkURL != nil)"
+            )
         } catch {
+            WatchSyncLog.phoneService.error(
+                "prepare_failed transfer=\(transferID.uuidString, privacy: .public) code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
             await snapshots.removeTransfer(transferID)
             restorePreviousIdentity(
                 of: record,
@@ -293,6 +303,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         switch event {
         case .statusChanged(let status):
             connectionStatus = status
+            WatchSyncLog.phoneService.notice(
+                "status_changed activation=\(String(describing: status.activation), privacy: .public) paired=\(String(describing: status.isPaired), privacy: .public) installed=\(String(describing: status.isWatchAppInstalled), privacy: .public) can_transfer=\(status.canTransfer)"
+            )
             // A status callback defines a new reconciliation boundary. Any
             // transfer remembered only by this process must now be proven by
             // WCSession.outstandingFileTransfers, otherwise a missed
@@ -331,6 +344,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                   record.state != .removedFromWatch else { return }
             if record.senderFailed { return }
             if let failure {
+                WatchSyncLog.phoneService.error(
+                    "delivery_failed transfer=\(key.transferID.uuidString, privacy: .public) kind=\(key.fileKind.rawValue, privacy: .public) code=\(failure.code, privacy: .public)"
+                )
                 if key.fileKind == .artwork {
                     // Artwork is optional. Keep the audio transfer usable even
                     // when WatchConnectivity cannot deliver the thumbnail.
@@ -365,6 +381,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 liveProgress[record.youtubeID] = 1
             case .artwork: record.artworkDeliveryFinished = true
             }
+            WatchSyncLog.phoneService.notice(
+                "delivery_completed transfer=\(key.transferID.uuidString, privacy: .public) kind=\(key.fileKind.rawValue, privacy: .public)"
+            )
             completeEvent(for: record)
 
         case .acknowledgement(let acknowledgement):
@@ -379,6 +398,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         guard let record = record(videoID: acknowledgement.youtubeID),
               record.transferID == acknowledgement.transferID,
               record.revision == acknowledgement.revision else { return }
+        WatchSyncLog.phoneService.notice(
+            "ack_correlated transfer=\(acknowledgement.transferID.uuidString, privacy: .public) revision=\(acknowledgement.revision) youtube=\(acknowledgement.youtubeID, privacy: .public) outcome=\(acknowledgement.outcome.rawValue, privacy: .public)"
+        )
         cancelScheduledTasks(videoID: acknowledgement.youtubeID)
 
         switch acknowledgement.outcome {
@@ -438,6 +460,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     }
 
     private func handleInventory(_ inventory: WatchInventorySnapshot) {
+        WatchSyncLog.phoneService.notice(
+            "inventory_applying generation=\(inventory.generation) entries=\(inventory.entries.count)"
+        )
         guard inventoryEntriesAreUnique(inventory.entries) else { return }
         let previousCursor = inventoryCursorStore.load()
         guard shouldAccept(inventory, after: previousCursor) else { return }
@@ -646,11 +671,17 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.senderFailed = false
             record.updatedAt = .now
             do {
+                WatchSyncLog.phoneService.notice(
+                    "enqueue_started transfer=\(record.transferID.uuidString, privacy: .public) revision=\(record.revision) youtube=\(record.youtubeID, privacy: .public)"
+                )
                 try transport.enqueueFile(
                     at: prepared.audioURL,
                     envelope: try envelope(for: record, fileKind: .audio, fileURL: prepared.audioURL)
                 )
             } catch {
+                WatchSyncLog.phoneService.error(
+                    "enqueue_failed transfer=\(record.transferID.uuidString, privacy: .public) code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+                )
                 transport.cancelFiles(transferID: record.transferID)
                 record.senderFailed = true
                 markFailed(record, code: "enqueue", message: error.localizedDescription)
