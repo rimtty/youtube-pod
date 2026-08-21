@@ -37,7 +37,10 @@ struct MiniPlayerView: View {
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
                         .frame(width: 40, height: 40)
+                        .background(PodPalette.brandGradient, in: Circle())
+                        .shadow(color: PodPalette.raspberry.opacity(0.22), radius: 8, y: 4)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
