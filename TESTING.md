@@ -31,7 +31,7 @@
 - 保存済み音声の削除後にダウンロード完了表示を破棄し、キュー末尾操作でも再生履歴を0秒で上書きしないことを確認
 - 起動時に中断された隠しステージングM4Aも孤児ファイルとして清掃することを確認
 - 最小対象watchOS 26.0。watchOS 27 / Apple Watch Series 9（41mm／45mm）SimulatorでWatchアプリのビルドと回帰テストに成功
-- Watch側回帰テスト: 129件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）
+- Watch側Unit回帰テスト: 129件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）。この件数にXCUITestは含まない
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認
 - WCSession callback URLを同期退避し、payload＋sidecar完成後のatomic rename、rename直前終了からの復旧、破損receiptの隔離を確認
 - WatchConnectivityの実delegate bridgeをdriverから分離し、callback復帰前のfile／削除command退避、activation、ACK／inventory送信、非active拒否を確認
@@ -51,6 +51,8 @@
 - 音声ファイル欠落、AVPlayerItem失敗、音声セッション中断、出力経路切断、Now Playingとリモート操作の状態遷移を確認
 - Watchライブラリは16:9サムネイル、ライブ再生位置、受信中／同期失敗／再試行、再生不可状態、Dynamic Type、VoiceOver、Reduce Transparency／Reduce Motionに対応
 - Accessibilityサイズでは同期エラーを省スペースの再同期操作へ切り替え、欠損ファイルを再生Buttonとして読み上げず、エラー種別ごとの再生案内を表示することを確認
+- Watch UIのDEBUG専用fixtureをXCUITestから起動し、最大Dynamic Type、同期エラー、再生可能／ファイル欠損行、ライブ再生位置、Reduce Motionを41mm／45mmの両方で実レンダリング検証。各サイズ4件、合計8件が失敗0件で成功し、結果は`/tmp/youtubepod-watch-verify-results/<run-id>/`のxcresultへ保存
+- CIでは非公開の`simctl`アクセシビリティ設定を使用せず、DEBUG fixtureの起動引数から最大Dynamic TypeをSwiftUI環境へ、Reduce Motionを表示判定へ決定的に注入する。本番は常にOSのReduce Motion環境値を使用し、VoiceOverとReduce Transparencyを含むOS設定そのものの実操作は実機チェック項目として維持する
 - iPhone側Watch転送は、直列キュー、重複抑止、進捗、キャンセル、最大2回の自動再試行、stale ACK拒否、送信完了とWatch ACKの順序入替、再起動時照合をスタブで確認
 - `didFinish`失敗はWCErrorDomainとcodeを組み合わせ、一時的な配送失敗だけを自動再試行し、容量不足・未ペアリング・不正payloadなどの恒久失敗を手動対応へ分類することを確認
 - Watch転送の表示・永続進捗は音声を基準とし、小さいサムネイルが先に完了して100%表示にならないことを確認
@@ -66,9 +68,10 @@
 - iPhoneライブラリの44pt Watch転送操作、進捗／キャンセル／再試行／削除、独立したWatch管理タブ、Google未ログイン時のライブラリ＋Watch導線を実装
 - iPhone／Watch各バンドルへRequired Reason APIのPrivacy Manifestを同梱し、Disk Space、UserDefaults、File Timestampの宣言を自動検証
 - Disk Space APIはWatch内の音声取込直前のローカル容量判定だけに使い、E174.1の用途に限定して取得値をinventoryへ含めずiPhoneへ自動送信しない
-- CIでiOS static analyzerとApple Watch Series 9（41mm／45mm）の両サイズを検証
+- Release Watchアプリに`DEBUG`条件、XCTest bundle、M4A fixture、DEBUG UI fixture sentinelが混入しないことを専用ゲートで確認
+- CIでiOS／watchOS static analyzerとApple Watch Series 9（41mm／45mm）の両サイズを検証し、Watch xcresultを14日間保存
 
-`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はwatchOS 27のApple Watch Series 9（41mm／45mm）Simulatorを必要に応じて作成し、両サイズで回帰テストを実行する。Watchアプリの最小対象はwatchOS 26.0とし、26.6と27系の実機を同じ成果物の対象にする。各スクリプトはビルド成果物内のPrivacy Manifestも検証する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はwatchOS 27のApple Watch Series 9（41mm／45mm）Simulatorを一時作成し、Unit testとXCUITestを両サイズで実行して終了時にSimulatorを削除する。Watchアプリの最小対象はwatchOS 26.0とし、26.6と27系の実機を同じ成果物の対象にする。各スクリプトはビルド成果物内のPrivacy Manifestも検証する。`./scripts/verify_watch_release_isolation.sh`はRelease Watchアプリを別のDerivedDataへビルドし、DEBUG fixtureの分離を検証する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 
 ## Apple Watch実機の合格条件（Simulatorでは検証不可）
 

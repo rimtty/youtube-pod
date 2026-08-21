@@ -27,6 +27,16 @@ final class WatchSessionReceiver {
     private(set) var isReceiving = false
     private(set) var lastErrorMessage: String?
 
+#if DEBUG
+    /// Installs deterministic presentation state without activating a live
+    /// WatchConnectivity session. Only the DEBUG UI-test composition calls it.
+    func installUITestFixture(errorMessage: String) {
+        guard !hasStarted else { return }
+        isReceiving = false
+        lastErrorMessage = errorMessage
+    }
+#endif
+
     init(
         stager: WatchIncomingFileStager,
         library: WatchAudioLibraryService,

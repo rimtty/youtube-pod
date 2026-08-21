@@ -9,10 +9,29 @@ struct WatchRootView: View {
 
     let player: WatchAudioPlayerService
     let receiver: WatchSessionReceiver
+    let playableAudioURL: (WatchSavedAudio) -> URL?
+    let libraryFileURL: (String) -> URL?
+    let reduceMotionOverride: Bool?
     let onDelete: (WatchSavedAudio) -> Void
 
     @State private var deletionTarget: WatchSavedAudio?
     @State private var showsPlayer = false
+
+    init(
+        player: WatchAudioPlayerService,
+        receiver: WatchSessionReceiver,
+        playableAudioURL: @escaping (WatchSavedAudio) -> URL? = watchPlayableAudioURL,
+        libraryFileURL: @escaping (String) -> URL? = watchLibraryFileURL,
+        reduceMotionOverride: Bool? = nil,
+        onDelete: @escaping (WatchSavedAudio) -> Void
+    ) {
+        self.player = player
+        self.receiver = receiver
+        self.playableAudioURL = playableAudioURL
+        self.libraryFileURL = libraryFileURL
+        self.reduceMotionOverride = reduceMotionOverride
+        self.onDelete = onDelete
+    }
 
     var body: some View {
         NavigationStack {
@@ -41,6 +60,7 @@ struct WatchRootView: View {
                                 .symbolRenderingMode(.palette)
                                 .foregroundStyle(.white, WatchPodPalette.violet)
                         }
+                        .accessibilityIdentifier("watch.player.open")
                         .accessibilityLabel("再生中の画面を開く")
                     }
                 }
@@ -83,7 +103,9 @@ struct WatchRootView: View {
                         audio: audio,
                         isCurrent: player.currentItem?.id == audio.youtubeID,
                         isPlaying: player.isPlaying,
-                        currentTime: player.currentTime
+                        currentTime: player.currentTime,
+                        playableAudioURL: playableAudioURL,
+                        reduceMotionOverride: reduceMotionOverride
                     ) {
                         guard let item = playbackItem(audio) else { return }
                         player.play(item, queue: audios.compactMap(playbackItem))
@@ -106,6 +128,7 @@ struct WatchRootView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .accessibilityIdentifier("watch.library.list")
     }
 
     private var emptyState: some View {
@@ -172,6 +195,7 @@ struct WatchRootView: View {
                     in: Capsule()
                 )
                 .padding(.horizontal, 4)
+                .accessibilityIdentifier("watch.receiver.error.compact")
                 .accessibilityLabel("同期エラー。再同期")
                 .accessibilityValue(message)
                 .accessibilityHint("ダブルタップしてiPhoneとの同期をやり直します")
@@ -205,6 +229,7 @@ struct WatchRootView: View {
                 )
                 .padding(.horizontal, 4)
                 .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("watch.receiver.error.detailed")
             }
         }
     }
@@ -217,9 +242,9 @@ struct WatchRootView: View {
     }
 
     private func playbackItem(_ audio: WatchSavedAudio) -> WatchPlaybackItem? {
-        guard let audioURL = watchPlayableAudioURL(for: audio) else { return nil }
+        guard let audioURL = playableAudioURL(audio) else { return nil }
         let artworkURL = audio.safeThumbnailRelativePath.flatMap {
-            watchLibraryFileURL(relativePath: $0)
+            libraryFileURL($0)
         }
         return WatchPlaybackItem(
             id: audio.youtubeID,
