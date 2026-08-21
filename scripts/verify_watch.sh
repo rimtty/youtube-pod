@@ -75,12 +75,11 @@ except subprocess.TimeoutExpired:
 '
 }
 
-run_watch_tests() {
+run_watch_unit_tests() {
     local destination=$1
     local derived_data=$2
     local result_prefix=$3
     local unit_result="$RESULTS_ROOT/$result_prefix-unit.xcresult"
-    local ui_result="$RESULTS_ROOT/$result_prefix-ui.xcresult"
 
     print "Testing Watch unit target: $destination"
     xcodebuild test \
@@ -91,6 +90,13 @@ run_watch_tests() {
         -derivedDataPath "$derived_data" \
         -resultBundlePath "$unit_result" \
         -parallel-testing-enabled NO
+}
+
+run_watch_ui_tests() {
+    local destination=$1
+    local derived_data=$2
+    local result_prefix=$3
+    local ui_result="$RESULTS_ROOT/$result_prefix-ui.xcresult"
 
     print "Testing Watch UI target: $destination"
     xcodebuild test \
@@ -112,7 +118,8 @@ mkdir -p "$RESULTS_ROOT"
 "$XCODEGEN" generate
 
 if [[ -n ${YOUTUBEPOD_WATCH_DESTINATION:-} ]]; then
-    run_watch_tests "$YOUTUBEPOD_WATCH_DESTINATION" "$DERIVED_DATA_ROOT" "custom"
+    run_watch_unit_tests "$YOUTUBEPOD_WATCH_DESTINATION" "$DERIVED_DATA_ROOT" "custom"
+    run_watch_ui_tests "$YOUTUBEPOD_WATCH_DESTINATION" "$DERIVED_DATA_ROOT" "custom"
     print "Watch test result bundles: $RESULTS_ROOT"
     exit 0
 fi
@@ -135,10 +142,13 @@ for size in 41mm 45mm; do
         "${SERIES_9_DEVICE_TYPES[$size]}" \
         "$runtime_id"
     device_id=$CREATED_DEVICE_ID
-    run_watch_tests \
-        "platform=watchOS Simulator,id=$device_id" \
-        "$DERIVED_DATA_ROOT-$size" \
-        "$size"
+    destination="platform=watchOS Simulator,id=$device_id"
+    # Unit tests do not depend on display size. Run them once, then keep UI
+    # coverage on both sizes while sharing build products across destinations.
+    if [[ "$size" == "41mm" ]]; then
+        run_watch_unit_tests "$destination" "$DERIVED_DATA_ROOT" "$size"
+    fi
+    run_watch_ui_tests "$destination" "$DERIVED_DATA_ROOT" "$size"
     xcrun simctl shutdown "$device_id" >/dev/null 2>&1 || true
 done
 

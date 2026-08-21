@@ -124,21 +124,21 @@ struct HomeView: View {
                     )
                 }
 
-                if !recent.isEmpty {
-                    videoSection(
-                        title: "登録チャンネルの新着",
-                        subtitle: "いつものチャンネルから、できたてを",
-                        icon: "sparkles.tv",
-                        videos: Array(recent.prefix(20))
-                    )
-                }
-
                 if !popular.isEmpty {
                     videoSection(
                         title: "日本で人気",
                         subtitle: "いま聴かれている動画",
                         icon: "flame.fill",
                         videos: Array(popular.prefix(20))
+                    )
+                }
+
+                if !recent.isEmpty {
+                    videoSection(
+                        title: "登録チャンネルの新着",
+                        subtitle: "いつものチャンネルから、できたてを",
+                        icon: "sparkles.tv",
+                        videos: Array(recent.prefix(20))
                     )
                 }
             }
