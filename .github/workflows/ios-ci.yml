@@ -14,14 +14,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Xcode 27 tests
+  iphone:
+    name: iPhone tests
     runs-on: xcode-27
     timeout-minutes: 60
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Show toolchain
         run: |
@@ -35,19 +35,40 @@ jobs:
       - name: Run simulator tests
         run: ./scripts/verify.sh
 
-      - name: Run Apple Watch Series 9+ simulator tests
-        run: ./scripts/verify_watch.sh
-
-      - name: Verify Apple Watch Release isolation
-        run: ./scripts/verify_watch_release_isolation.sh
-
-      - name: Run static analysis
+      - name: Run iPhone static analysis
         run: |
           xcodebuild analyze \
             -project YouTubePod.xcodeproj \
             -scheme YouTubePod \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath /tmp/youtubepod-analyze-derived-data
+
+  watch:
+    name: Apple Watch tests
+    runs-on: xcode-27
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          python3 --version
+
+      - name: Bootstrap pinned dependencies
+        run: ./scripts/bootstrap.sh
+
+      - name: Run Apple Watch Series 9+ simulator tests
+        run: ./scripts/verify_watch.sh
+
+      - name: Verify Apple Watch Release isolation
+        run: ./scripts/verify_watch_release_isolation.sh
+
+      - name: Run Watch static analysis
+        run: |
           xcodebuild analyze \
             -project YouTubePod.xcodeproj \
             -scheme YouTubePodWatch \
@@ -56,7 +77,7 @@ jobs:
 
       - name: Preserve Apple Watch test results
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: apple-watch-xcresults
           path: /tmp/youtubepod-watch-verify-results/**/*.xcresult
