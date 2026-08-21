@@ -3,6 +3,7 @@ import SwiftUI
 
 struct WatchRootView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \WatchSavedAudio.receivedAt, order: .reverse)
     private var audios: [WatchSavedAudio]
 
@@ -151,34 +152,60 @@ struct WatchRootView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("iPhoneから音声を受信中")
         } else if let message = receiver.lastErrorMessage {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.yellow)
-                    .accessibilityHidden(true)
-                Text(message)
-                    .font(.caption2)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if WatchUIPresentation.receiverErrorLayout(
+                isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+            ) == .compact {
                 Button {
                     Task { await receiver.synchronizeNow() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 28, height: 28)
+                    Label("再同期", systemImage: "arrow.clockwise")
+                        .font(.caption2.weight(.semibold))
+                        .frame(minWidth: 44, maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("再同期")
+                .padding(.horizontal, 10)
+                .background(
+                    reduceTransparency
+                        ? AnyShapeStyle(WatchPodPalette.deepTurquoise)
+                        : AnyShapeStyle(.thinMaterial),
+                    in: Capsule()
+                )
+                .padding(.horizontal, 4)
+                .accessibilityLabel("同期エラー。再同期")
+                .accessibilityValue(message)
+                .accessibilityHint("ダブルタップしてiPhoneとの同期をやり直します")
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                        .accessibilityHidden(true)
+                    Text(message)
+                        .font(.caption2)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        Task { await receiver.synchronizeNow() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 28, height: 28)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("再同期")
+                }
+                .padding(.leading, 8)
+                .padding(.trailing, 4)
+                .background(
+                    reduceTransparency
+                        ? AnyShapeStyle(WatchPodPalette.deepTurquoise)
+                        : AnyShapeStyle(.thinMaterial),
+                    in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                )
+                .padding(.horizontal, 4)
+                .accessibilityElement(children: .contain)
             }
-            .padding(.leading, 8)
-            .padding(.trailing, 4)
-            .padding(.vertical, 5)
-            .background(
-                reduceTransparency
-                    ? AnyShapeStyle(WatchPodPalette.deepTurquoise)
-                    : AnyShapeStyle(.thinMaterial),
-                in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-            )
-            .padding(.horizontal, 4)
-            .accessibilityElement(children: .contain)
         }
     }
 

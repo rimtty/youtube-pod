@@ -38,6 +38,7 @@
 		602EFFBAE7489C7DA9AE25E3 /* WatchTransferEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */; };
 		60DB56C78ECD54D0655E0082 /* WatchAudioLibraryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36083239230144DE7DA56E93 /* WatchAudioLibraryServiceTests.swift */; };
 		6714AA556D6B8C0D5B64FDCF /* WatchSavedAudioModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85422FE1666FF49BEA4EA0D7 /* WatchSavedAudioModelTests.swift */; };
+		68BC812623FA2D1E285CC6E3 /* WatchUIPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C6BEE7B9304A645EA20567 /* WatchUIPresentation.swift */; };
 		6BB2F94A12A491757926E063 /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB3B6D6907405BF886AF9F8 /* WatchRootView.swift */; };
 		6F20BC930C27655C4A883247 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 19994901F44058463351D767 /* PrivacyInfo.xcprivacy */; };
 		779762809D5765754F692BAD /* WatchTransferEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */; };
@@ -49,6 +50,7 @@
 		7FB71B1C906A802B9D024221 /* AuthenticationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DA897F2BE0AF3C988D3AA1 /* AuthenticationView.swift */; };
 		805659ACCFF09E7C66C3BB05 /* WatchLibraryMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAFCA25E8657AF5E6D7658F7 /* WatchLibraryMetadata.swift */; };
 		80CEC619F47B5014C92DFD3A /* WatchAudioLibraryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBCA5DCCACE334EE470F41A /* WatchAudioLibraryService.swift */; };
+		85B3EB956743261DFBF0A56B /* WatchUIPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B38163D239EF8A7309310F4 /* WatchUIPresentationTests.swift */; };
 		8986B709E74E6CA7908A8366 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B3E5897A8E9BFCFAC4644 /* AppEnvironment.swift */; };
 		8E17B6D611F7E10AF3BC9BEB /* WCSessionAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB33383412545BD6482A40B /* WCSessionAdapterTests.swift */; };
 		8EEA384377E426E0DBC1E98C /* WatchIncomingFileStagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34265591AAEF354E16CF6FC8 /* WatchIncomingFileStagerTests.swift */; };
@@ -163,6 +165,7 @@
 		53BEB435BC9F0BB78274C9A6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		57C815A832E88BFC47DB83BB /* ChannelVideosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelVideosView.swift; sourceTree = "<group>"; };
 		5AAC5454886101653737213F /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		5B38163D239EF8A7309310F4 /* WatchUIPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchUIPresentationTests.swift; sourceTree = "<group>"; };
 		696DF6F1B56DDB6CBE2046D2 /* YouTubePodWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = YouTubePodWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6A75FC54A4456C9D87CA197F /* WatchAudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioPlayerService.swift; sourceTree = "<group>"; };
 		6D7C4B92010911A4AF7900CB /* PhoneWatchTransferService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneWatchTransferService.swift; sourceTree = "<group>"; };
@@ -211,6 +214,7 @@
 		EAFCA25E8657AF5E6D7658F7 /* WatchLibraryMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLibraryMetadata.swift; sourceTree = "<group>"; };
 		ECBF84DBA1C1C2CBC63844AA /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F21B79C2A27FB9BB14562982 /* WatchNowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchNowPlayingView.swift; sourceTree = "<group>"; };
+		F6C6BEE7B9304A645EA20567 /* WatchUIPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchUIPresentation.swift; sourceTree = "<group>"; };
 		FB54C7DF35A0712AE5967AD2 /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
 		FB5B605B26858B41FC919F67 /* WatchWCSessionDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWCSessionDriver.swift; sourceTree = "<group>"; };
 		FD1CCA0C071673B7CBABD275 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = Frameworks/Python.xcframework; sourceTree = "<group>"; };
@@ -231,6 +235,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		03B6256627AE1B475A5E838C /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				F6C6BEE7B9304A645EA20567 /* WatchUIPresentation.swift */,
+			);
+			path = Presentation;
+			sourceTree = "<group>";
+		};
 		06A68F2FCE875ED60A974D8F /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -254,6 +266,7 @@
 				19994901F44058463351D767 /* PrivacyInfo.xcprivacy */,
 				5FC798930D71D3B731FBA658 /* App */,
 				E0F00B151C1D41B5CEF9660B /* Domain */,
+				03B6256627AE1B475A5E838C /* Presentation */,
 				06A68F2FCE875ED60A974D8F /* Services */,
 				C320E82C4B7A0A1CA59DAF22 /* Views */,
 			);
@@ -301,6 +314,7 @@
 				85422FE1666FF49BEA4EA0D7 /* WatchSavedAudioModelTests.swift */,
 				322893D08CB6846C6B6EA1EB /* WatchSessionReceiverTests.swift */,
 				5145060929FDD54F3F5E96D0 /* WatchTransferEnvelopeTests.swift */,
+				5B38163D239EF8A7309310F4 /* WatchUIPresentationTests.swift */,
 			);
 			path = YouTubePodWatchTests;
 			sourceTree = "<group>";
@@ -688,6 +702,7 @@
 				6714AA556D6B8C0D5B64FDCF /* WatchSavedAudioModelTests.swift in Sources */,
 				79701270A23881DED6DFCC1A /* WatchSessionReceiverTests.swift in Sources */,
 				04FB81BCBFB6ED9A82246EE8 /* WatchTransferEnvelopeTests.swift in Sources */,
+				85B3EB956743261DFBF0A56B /* WatchUIPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -710,6 +725,7 @@
 				4EC921A8D181478022C12A9E /* WatchSavedAudio.swift in Sources */,
 				986DAE8E2AFB7AA426645274 /* WatchSessionReceiver.swift in Sources */,
 				779762809D5765754F692BAD /* WatchTransferEnvelope.swift in Sources */,
+				68BC812623FA2D1E285CC6E3 /* WatchUIPresentation.swift in Sources */,
 				45AA57D045F57EE8CCCBC40F /* WatchWCSessionDriver.swift in Sources */,
 				9181DDE6816B67E58936F59A /* YouTubePodWatchApp.swift in Sources */,
 			);
