@@ -5,10 +5,11 @@ import Foundation
 actor PythonAudioExtractor: AudioExtracting {
     private static let workDirectoryPrefix = "YouTubePod-"
     private var cancellationURLs: [String: URL] = [:]
+    // CPython and the yt-dlp Apple WebKit JS provider both own process-global
+    // state. Serial execution prevents overlapping hidden WKWebView sessions.
     private let worker = DispatchQueue(
         label: "com.rimtty.YouTubePod.python",
-        qos: .userInitiated,
-        attributes: .concurrent
+        qos: .userInitiated
     )
 
     nonisolated static func removeStaleWorkingDirectories() {

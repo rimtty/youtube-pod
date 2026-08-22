@@ -17,6 +17,28 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         temporaryRoot = nil
     }
 
+    func testRetryRequiresFreshSnapshotOnlyWhenPreviousSnapshotCannotBeReused() {
+        let record = WatchTransferRecord(
+            youtubeID: "retry001",
+            title: "Retry",
+            channelTitle: "Channel",
+            publishedAt: .now,
+            duration: 60,
+            savedViewCount: 1,
+            sourceFileSize: 1
+        )
+
+        record.state = .failed
+        record.lastErrorCode = "snapshot"
+        XCTAssertTrue(record.requiresFreshSnapshotForRetry)
+
+        record.lastErrorCode = "watch-import"
+        XCTAssertFalse(record.requiresFreshSnapshotForRetry)
+
+        record.state = .reconciliationRequired
+        XCTAssertTrue(record.requiresFreshSnapshotForRetry)
+    }
+
     func testEnqueueCreatesTransferAndSuppressesDuplicateRequest() async throws {
         let fixture = try makeFixture()
         let source = try makeSource(id: "transfer001", artwork: true)
@@ -151,6 +173,37 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(record.retryCount, 1)
         XCTAssertNotEqual(record.transferID, firstTransferID)
         XCTAssertEqual(fixture.transport.sent.count, 2)
+    }
+
+    func testDiscardRetryRemovesFailedRecordAndPreparedSnapshot() async throws {
+        let fixture = try makeFixture()
+        let source = try makeSource(id: "discard0001", artwork: false)
+        try await fixture.service.enqueue(source)
+        let transferID = try XCTUnwrap(fixture.transport.sent.first?.envelope.transferID)
+        fixture.service.cancel(videoID: source.youtubeID)
+
+        try fixture.service.discardRetry(videoID: source.youtubeID)
+
+        XCTAssertNil(record(source.youtubeID, in: fixture.context))
+        XCTAssertNil(fixture.service.liveProgress[source.youtubeID])
+        XCTAssertTrue(fixture.transport.cancelledTransferIDs.contains(transferID))
+        try await waitUntilAsync {
+            !(await fixture.snapshots.contains(transferID))
+        }
+    }
+
+    func testDiscardRetryRejectsAvailableWatchRecord() throws {
+        let fixture = try makeFixture()
+        let record = availableRecord(id: "discard0002")
+        fixture.context.insert(record)
+        try fixture.context.save()
+
+        XCTAssertThrowsError(try fixture.service.discardRetry(videoID: record.youtubeID)) { error in
+            guard case WatchTransferServiceError.discardUnavailable = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        XCTAssertNotNil(self.record(record.youtubeID, in: fixture.context))
     }
 
     func testAllTransfersAreSubmittedToWCSessionForBackgroundDelivery() async throws {

@@ -115,6 +115,8 @@ targets:
     platform: watchOS
     sources:
       - path: YouTubePodWatchTests
+      - path: YouTubePodTests/Fixtures/fragmented-aac.m4a
+        buildPhase: resources
     configFiles:
       Debug: Config/WatchTests.xcconfig
       Release: Config/WatchTests.xcconfig

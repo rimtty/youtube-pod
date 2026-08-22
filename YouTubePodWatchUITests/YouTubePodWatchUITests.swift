@@ -167,21 +167,35 @@ final class YouTubePodWatchUITests: XCTestCase {
         XCTAssertEqual(pausedOverlay.label, "再生")
     }
 
-    func testDigitalCrownUsesSystemVolumeControlWithoutMovingTimeline() {
+    func testDigitalCrownUsesStandardVolumeControlBelowTimeline() {
         let app = launchFixture()
         openNowPlaying(in: app)
 
         let volumeControl = element(AccessibilityID.systemVolumeControl, in: app)
         let scrubber = element(AccessibilityID.scrubber, in: app)
-        XCTAssertTrue(volumeControl.waitForExistence(timeout: 5))
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
-        let initialVolumeFrame = volumeControl.frame
+        XCTAssertTrue(volumeControl.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(
+            volumeControl.frame.midY,
+            scrubber.frame.midY,
+            "The standard volume control must be presented below the seek bar."
+        )
+        XCTAssertLessThanOrEqual(
+            volumeControl.frame.maxY,
+            app.frame.maxY,
+            "The standard volume control must remain fully visible on the smallest supported screen."
+        )
         let initialScrubberFrame = scrubber.frame
+        let initialVolumeFrame = volumeControl.frame
 
-        XCUIDevice.shared.rotateDigitalCrown(delta: -0.5)
+        XCUIDevice.shared.rotateDigitalCrown(delta: 0.5)
 
-        XCTAssertEqual(volumeControl.frame.minY, initialVolumeFrame.minY, accuracy: 1)
         XCTAssertEqual(scrubber.frame.minY, initialScrubberFrame.minY, accuracy: 1)
+        XCTAssertEqual(volumeControl.frame.minY, initialVolumeFrame.minY, accuracy: 1)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Watch Now Playing after volume adjustment"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testSimulatorSyncFixtureImportsAudioThroughProductionReceivePipeline() {

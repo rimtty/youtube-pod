@@ -71,5 +71,6 @@ protocol WatchTransferManaging: AnyObject {
     func enqueue(_ source: WatchTransferSource) async throws
     func cancel(videoID: String)
     func retry(videoID: String) async throws
+    func discardRetry(videoID: String) throws
     func requestDeletion(videoID: String) throws
 }

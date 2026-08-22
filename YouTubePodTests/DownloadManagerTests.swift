@@ -3,7 +3,7 @@ import XCTest
 
 @MainActor
 final class DownloadManagerTests: XCTestCase {
-    func testQueueRunsAtMostThreeImportsConcurrentlyAndCompletes() async throws {
+    func testDefaultQueueRunsOneImportAtATimeAndCompletes() async throws {
         let extractor = ImmediateExtractor()
         let library = LibraryStub()
         let manager = DownloadManager(extractor: extractor, library: library)
@@ -22,7 +22,7 @@ final class DownloadManagerTests: XCTestCase {
 
         XCTAssertEqual(Set(library.importedVideoIDs), Set([first.id, second.id, third.id, fourth.id]))
         let maximumConcurrentExtractions = await extractor.maximumConcurrentExtractions
-        XCTAssertEqual(maximumConcurrentExtractions, 3)
+        XCTAssertEqual(maximumConcurrentExtractions, 1)
     }
 
     func testCancellingQueuedItemLeavesActiveItemIndependent() async throws {

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftData
 import XCTest
@@ -878,6 +879,58 @@ final class WatchAudioLibraryServiceTests: XCTestCase {
             .appendingPathComponent(retained.audioRelativePath).path))
     }
 
+    func testStartupCleanupRepairsDurationFromMovieHeaderAndClampsPosition() async throws {
+        let fixture = try makeFixture()
+        let staged = try makeStaged(
+            videoID: "duration001",
+            transferID: UUID(),
+            revision: 1,
+            kind: .audio
+        )
+        let importResult = await fixture.service.importStagedFile(staged)
+        XCTAssertEqual(importResult, .imported)
+        let saved = try XCTUnwrap(fetch(WatchSavedAudio.self, fixture.context).first)
+        let audioURL = fixture.rootURL.appendingPathComponent(saved.audioRelativePath)
+        try FileManager.default.removeItem(at: audioURL)
+        try makeFlatM4AAudioFile(at: audioURL, frameCount: 88_200)
+        let expectedDuration = try ISOBaseMediaDurationReader.normalizedDuration(at: audioURL)
+        saved.duration = expectedDuration * 2
+        saved.lastPlaybackPosition = expectedDuration * 1.5
+        try fixture.context.save()
+        let generation = try XCTUnwrap(
+            fetch(WatchLibraryMetadata.self, fixture.context).first?.generation
+        )
+
+        try fixture.service.cleanupOnStartup()
+
+        XCTAssertEqual(saved.duration, expectedDuration, accuracy: 0.001)
+        XCTAssertEqual(saved.lastPlaybackPosition, expectedDuration, accuracy: 0.001)
+        XCTAssertEqual(
+            fetch(WatchLibraryMetadata.self, fixture.context).first?.generation,
+            generation + 1
+        )
+    }
+
+    private func makeFlatM4AAudioFile(at url: URL, frameCount: AVAudioFrameCount) throws {
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 64_000,
+            ]
+        )
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: frameCount
+        ) else {
+            throw WatchAudioLibraryTestError.bufferAllocationFailed
+        }
+        buffer.frameLength = frameCount
+        try file.write(from: buffer)
+    }
+
     private func makeFixture(
         validator: any WatchAudioValidating = PassthroughAudioValidator(),
         capacityChecker: any WatchCapacityChecking = AllowingCapacityChecker(),
@@ -978,6 +1031,10 @@ private enum SaveFailure: Error {
 
 private enum ImportCheckpointFailure: Error {
     case forced
+}
+
+private enum WatchAudioLibraryTestError: Error {
+    case bufferAllocationFailed
 }
 
 private struct PassthroughAudioValidator: WatchAudioValidating {

@@ -108,9 +108,7 @@ struct WatchRootView: View {
                         reduceMotionOverride: reduceMotionOverride
                     ) {
                         guard let item = playbackItem(audio) else { return }
-                        if player.currentItem?.id != item.id {
-                            player.play(item, queue: audios.compactMap(playbackItem))
-                        }
+                        player.play(item, queue: audios.compactMap(playbackItem))
                         showsPlayer = true
                     }
                     .listRowInsets(EdgeInsets(top: 5, leading: 4, bottom: 5, trailing: 4))

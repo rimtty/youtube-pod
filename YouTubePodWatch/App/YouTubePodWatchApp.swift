@@ -110,8 +110,13 @@ struct YouTubePodWatchApp: App {
                     receiver.start()
                 }
                 .onChange(of: scenePhase) {
-                    guard scenePhase != .active else { return }
-                    player.persistPosition()
+                    if scenePhase == .active {
+                        Task { await receiver.resumeFromForeground() }
+                    } else {
+                        // Display sleep is controlled by watchOS. Persisting the
+                        // position must not pause long-form background audio.
+                        player.persistPosition()
+                    }
                 }
         }
         .modelContainer(container)
@@ -120,6 +125,7 @@ struct YouTubePodWatchApp: App {
             await receiver.handleConnectivityBackgroundTask()
         }
     }
+
 }
 
 private extension View {

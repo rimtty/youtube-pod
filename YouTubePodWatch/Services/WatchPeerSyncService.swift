@@ -27,7 +27,11 @@ struct WatchConnectivityWaitPolicy: Equatable, Sendable {
         pollInterval: .milliseconds(25),
         activationCheckLimit: 40,
         contentCheckLimit: 80,
-        requiredConsecutiveEmptyChecks: 2
+        // The watchConnectivity background handler can run before WCSession
+        // invokes its delegate. Keep the task alive through a short quiet
+        // window instead of treating the first 50 ms without pending content
+        // as proof that delivery is complete.
+        requiredConsecutiveEmptyChecks: 20
     )
 }
 
