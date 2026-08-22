@@ -4,6 +4,37 @@ import Testing
 @testable import YouTubePodWatch
 
 struct WatchAudioValidatorTests {
+    @Test func fragmentedM4AUsesAudibleTrackDuration() async throws {
+        let url = try #require(
+            Bundle(for: WatchAudioValidatorTestBundleToken.self)
+                .url(forResource: "fragmented-aac", withExtension: "m4a")
+        )
+        let size = Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        let declaredDuration = 1.523
+
+        let validated = try await AVFoundationWatchAudioValidator().validate(
+            fileURL: url,
+            envelope: envelope(fileSize: size, duration: declaredDuration)
+        )
+
+        #expect(abs(validated.actualDuration - declaredDuration) < 0.05)
+    }
+
+    @Test func declaredDurationMustMatchMovieHeaderTimeline() async throws {
+        let url = try #require(
+            Bundle(for: WatchAudioValidatorTestBundleToken.self)
+                .url(forResource: "fragmented-aac", withExtension: "m4a")
+        )
+        let size = Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+
+        await #expect(throws: WatchAudioValidationError.self) {
+            _ = try await AVFoundationWatchAudioValidator().validate(
+                fileURL: url,
+                envelope: envelope(fileSize: size, duration: 30)
+            )
+        }
+    }
+
     @Test func generatedM4AWithAudioOnlyIsAccepted() async throws {
         let url = try makeM4AAudioFile()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -75,7 +106,7 @@ struct WatchAudioValidatorTests {
         }
     }
 
-    private func envelope(fileSize: Int64) -> WatchTransferEnvelope {
+    private func envelope(fileSize: Int64, duration: TimeInterval = 0.1) -> WatchTransferEnvelope {
         WatchTransferEnvelope(
             transferID: UUID(),
             revision: 1,
@@ -85,7 +116,7 @@ struct WatchAudioValidatorTests {
             channel: "Channel",
             publishedAt: nil,
             viewCount: 1,
-            duration: 0.1,
+            duration: duration,
             fileSize: fileSize,
             playbackPosition: 0
         )
@@ -118,6 +149,8 @@ struct WatchAudioValidatorTests {
         return url
     }
 }
+
+private final class WatchAudioValidatorTestBundleToken {}
 
 private enum WatchAudioValidatorTestError: Error {
     case bufferAllocationFailed

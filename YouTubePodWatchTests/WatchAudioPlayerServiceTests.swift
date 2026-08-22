@@ -80,6 +80,99 @@ final class WatchAudioPlayerServiceTests: XCTestCase {
         XCTAssertEqual(player.currentTime, 75)
     }
 
+    func testPlayingM4ASeekPausesUntilAudioSessionReactivates() async {
+        let session = TestWatchAudioSession(automaticallyCompletes: false)
+        let avPlayer = AVPlayer()
+        let player = WatchAudioPlayerService(player: avPlayer, audioSession: session)
+        let item = m4aPlaybackItem(id: "watchplay-m4a-seek", duration: 3)
+        player.play(item, queue: [item])
+        session.completeActivation(at: 0, error: nil)
+        let becameReady = await waitUntil { avPlayer.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(becameReady)
+
+        player.seek(to: 1.5)
+
+        XCTAssertEqual(avPlayer.rate, 0)
+        XCTAssertTrue(player.isPlaying)
+        let requestedReactivation = await waitUntil { session.activationCount == 2 }
+        XCTAssertTrue(requestedReactivation)
+        XCTAssertEqual(avPlayer.rate, 0, "Playback must wait for route activation")
+
+        session.completeActivation(at: 1, error: nil)
+
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(avPlayer.rate, 1)
+        XCTAssertEqual(player.currentTime, 1.5, accuracy: 0.25)
+        XCTAssertNil(player.playbackError)
+    }
+
+    func testPausedM4ASeekDoesNotReactivateOrResume() async {
+        let session = TestWatchAudioSession()
+        let avPlayer = AVPlayer()
+        let player = WatchAudioPlayerService(player: avPlayer, audioSession: session)
+        let item = m4aPlaybackItem(id: "watchplay-m4a-paused", duration: 3)
+        player.play(item, queue: [item])
+        let becameReady = await waitUntil { avPlayer.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(becameReady)
+        player.togglePlayback()
+
+        player.seek(to: 1.25)
+
+        let reachedTarget = await waitUntil {
+            abs((avPlayer.currentItem?.currentTime().seconds ?? 0) - 1.25) < 0.25
+        }
+        XCTAssertTrue(reachedTarget)
+        XCTAssertEqual(session.activationCount, 1)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(avPlayer.rate, 0)
+    }
+
+    func testSupersededSeekActivationCannotResumeBeforeNewestM4ASeek() async {
+        let session = TestWatchAudioSession(automaticallyCompletes: false)
+        let avPlayer = AVPlayer()
+        let player = WatchAudioPlayerService(player: avPlayer, audioSession: session)
+        let item = m4aPlaybackItem(id: "watchplay-m4a-latest", duration: 3)
+        player.play(item, queue: [item])
+        session.completeActivation(at: 0, error: nil)
+        let becameReady = await waitUntil { avPlayer.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(becameReady)
+
+        player.seek(to: 0.75)
+        let requestedFirstReactivation = await waitUntil { session.activationCount == 2 }
+        XCTAssertTrue(requestedFirstReactivation)
+        player.seek(to: 2.25)
+        let requestedLatestReactivation = await waitUntil { session.activationCount == 3 }
+        XCTAssertTrue(requestedLatestReactivation)
+
+        session.completeActivation(at: 1, error: nil)
+        XCTAssertEqual(avPlayer.rate, 0, "A superseded seek must not restart audio")
+        session.completeActivation(at: 2, error: nil)
+
+        XCTAssertEqual(avPlayer.rate, 1)
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(player.currentTime, 2.25, accuracy: 0.25)
+    }
+
+    func testM4ASeekActivationFailureStopsPlaybackAndSurfacesRouteError() async {
+        let session = TestWatchAudioSession(automaticallyCompletes: false)
+        let avPlayer = AVPlayer()
+        let player = WatchAudioPlayerService(player: avPlayer, audioSession: session)
+        let item = m4aPlaybackItem(id: "watchplay-m4a-route", duration: 3)
+        player.play(item, queue: [item])
+        session.completeActivation(at: 0, error: nil)
+        let becameReady = await waitUntil { avPlayer.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(becameReady)
+
+        player.seek(to: 1.75)
+        let requestedReactivation = await waitUntil { session.activationCount == 2 }
+        XCTAssertTrue(requestedReactivation)
+        session.completeActivation(at: 1, error: .audioRouteUnavailable)
+
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(avPlayer.rate, 0)
+        XCTAssertEqual(player.playbackError, .audioRouteUnavailable)
+    }
+
     func testPlaybackStallKeepsIntendedPlaybackActiveWithoutReactivatingSession() {
         let session = TestWatchAudioSession()
         let player = makePlayer(session: session)
@@ -93,18 +186,57 @@ final class WatchAudioPlayerServiceTests: XCTestCase {
         XCTAssertNil(player.playbackError)
     }
 
-    func testSelectingCurrentItemDoesNotReloadOrRestartPlayback() {
+    func testSelectingCurrentItemDoesNotReloadOrRestartPlayback() async {
         let session = TestWatchAudioSession()
         let player = makePlayer(session: session)
-        let item = playbackItem(id: "watchplay-current", duration: 120, resume: 10)
+        let item = m4aPlaybackItem(id: "watchplay-current", duration: 3)
         player.play(item, queue: [item])
-        player.seek(to: 41)
+        player.seek(to: 1.25)
+        let requestedReactivation = await waitUntil { session.activationCount == 2 }
+        XCTAssertTrue(requestedReactivation)
 
         player.play(item, queue: [item])
 
-        XCTAssertEqual(session.activationCount, 1)
-        XCTAssertEqual(player.currentTime, 41)
+        XCTAssertEqual(session.activationCount, 2)
+        XCTAssertEqual(player.currentTime, 1.25, accuracy: 0.25)
         XCTAssertTrue(player.isPlaying)
+    }
+
+    func testCompletedPersistedItemStartsAgainFromBeginning() {
+        let session = TestWatchAudioSession()
+        let player = makePlayer(session: session)
+        let item = playbackItem(
+            id: "watchplay-completed-persisted",
+            duration: 120,
+            resume: 120,
+            hasBeenPlayed: true
+        )
+
+        player.play(item, queue: [item])
+
+        XCTAssertEqual(player.currentTime, 0)
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(session.activationCount, 1)
+    }
+
+    func testSelectingStoppedCurrentItemAtEndRestartsFromBeginning() async {
+        let session = TestWatchAudioSession()
+        let player = makePlayer(session: session)
+        let item = playbackItem(id: "watchplay-completed-current", duration: 120)
+        player.play(item, queue: [item])
+        player.handlePlaybackCompletion()
+
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(player.currentTime, 120)
+
+        player.play(item, queue: [item])
+
+        let restarted = await waitUntil {
+            session.activationCount == 2 && player.currentTime == 0
+        }
+        XCTAssertTrue(restarted)
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(player.currentItem?.id, item.id)
     }
 
     func testPreviousRestartsCurrentBeforeMovingBackAndNextNavigatesQueue() {
@@ -392,7 +524,8 @@ final class WatchAudioPlayerServiceTests: XCTestCase {
     private func playbackItem(
         id: String,
         duration: TimeInterval,
-        resume: TimeInterval = 0
+        resume: TimeInterval = 0,
+        hasBeenPlayed: Bool = false
     ) -> WatchPlaybackItem {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(id).caf")
@@ -412,8 +545,50 @@ final class WatchAudioPlayerServiceTests: XCTestCase {
             channelTitle: "Test channel",
             duration: duration,
             fileURL: fileURL,
-            resumePosition: resume
+            resumePosition: resume,
+            hasBeenPlayed: hasBeenPlayed
         )
+    }
+
+    private func m4aPlaybackItem(id: String, duration: TimeInterval) -> WatchPlaybackItem {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(id).m4a")
+        try? FileManager.default.removeItem(at: fileURL)
+        let audioFile = try! AVAudioFile(
+            forWriting: fileURL,
+            settings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 64_000,
+            ]
+        )
+        let frameCount = AVAudioFrameCount(44_100 * duration)
+        let buffer = AVAudioPCMBuffer(
+            pcmFormat: audioFile.processingFormat,
+            frameCapacity: frameCount
+        )!
+        buffer.frameLength = frameCount
+        try! audioFile.write(from: buffer)
+        return WatchPlaybackItem(
+            id: id,
+            title: id,
+            channelTitle: "Test channel",
+            duration: duration,
+            fileURL: fileURL
+        )
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(3),
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition(), clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return condition()
     }
 }
 

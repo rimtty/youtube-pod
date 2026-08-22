@@ -13,6 +13,7 @@ struct RootView: View {
     @State private var showsAccount = false
     @State private var showsPlayer = false
     @State private var isBrowsingOfflineLibrary = false
+    @State private var isLibrarySelectionActive = false
 
     var body: some View {
         rootContent
@@ -117,7 +118,8 @@ struct RootView: View {
                         },
                         signIn: {
                             Task { try? await environment.auth.signIn() }
-                        }
+                        },
+                        onSelectionModeChange: { isLibrarySelectionActive = $0 }
                     )
                 }
             }
@@ -185,7 +187,9 @@ struct RootView: View {
 
             Tab("ライブラリ", systemImage: "headphones", value: .library) {
                 tabContent {
-                    LibraryView()
+                    LibraryView(
+                        onSelectionModeChange: { isLibrarySelectionActive = $0 }
+                    )
                 }
             }
             .badge(unplayedAudioCount)
@@ -212,7 +216,8 @@ struct RootView: View {
 
     @ViewBuilder
     private var miniPlayer: some View {
-        if let item = environment.player.currentItem {
+        if !isCurrentLibrarySelectionActive,
+           let item = environment.player.currentItem {
             MiniPlayerView(
                 item: item,
                 isPlaying: environment.player.isPlaying,
@@ -225,6 +230,13 @@ struct RootView: View {
             .padding(.bottom, 10)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+
+    private var isCurrentLibrarySelectionActive: Bool {
+        if isBrowsingOfflineLibrary, !environment.auth.isSignedIn {
+            return offlineSelectedTab == .library && isLibrarySelectionActive
+        }
+        return selectedTab == .library && isLibrarySelectionActive
     }
 
     private var playbackProgress: Double {

@@ -107,4 +107,12 @@ final class WatchTransferRecord {
         get { WatchTransferState(rawValue: stateRawValue) ?? .reconciliationRequired }
         set { stateRawValue = newValue.rawValue }
     }
+
+    var requiresFreshSnapshotForRetry: Bool {
+        state == .reconciliationRequired || (state == .failed && lastErrorCode == "snapshot")
+    }
+
+    var isWatchDeletionFailure: Bool {
+        lastErrorCode == "watch-delete" || lastErrorCode == "delete-send"
+    }
 }

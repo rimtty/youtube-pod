@@ -43,6 +43,28 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
     }
 
+    func testForegroundResumeReactivatesPeerAndSynchronizesDurableInbox() async throws {
+        let fixture = try makeFixture()
+        fixture.receiver.start()
+        await fixture.receiver.synchronizeNow()
+        XCTAssertEqual(fixture.peer.activationCount, 1)
+
+        let transferID = UUID()
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver017",
+            transferID: transferID,
+            revision: 1
+        )
+
+        await fixture.receiver.resumeFromForeground()
+
+        XCTAssertEqual(fixture.peer.activationCount, 2)
+        XCTAssertEqual(fetch(WatchSavedAudio.self, fixture.context).first?.youtubeID, "receiver017")
+        XCTAssertEqual(fixture.peer.acknowledgements.last?.transferID, transferID)
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+    }
+
     func testEachSynchronizationPassRereadsRequestAndPublishesCorrelation() async throws {
         let fixture = try makeFixture()
         let first = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)

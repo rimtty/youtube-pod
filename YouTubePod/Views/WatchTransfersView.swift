@@ -14,6 +14,7 @@ struct WatchTransfersView: View {
     @Query private var savedAudios: [SavedAudio]
 
     @State private var deletionTarget: WatchTransferRecord?
+    @State private var retryDiscardTarget: WatchTransferRecord?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -52,6 +53,7 @@ struct WatchTransfersView: View {
                                     liveProgress: environment.watchTransfers.liveProgress[record.youtubeID],
                                     onRetry: { retry(record) },
                                     onCancel: { environment.watchTransfers.cancel(videoID: record.youtubeID) },
+                                    onDiscardRetry: { retryDiscardTarget = record },
                                     onDelete: { deletionTarget = record }
                                 )
                                 .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
@@ -79,6 +81,14 @@ struct WatchTransfersView: View {
                 Button("キャンセル", role: .cancel) { deletionTarget = nil }
             } message: { record in
                 Text("「\(record.title)」をApple Watchから削除します。iPhoneのライブラリにある音声は削除されません。")
+            }
+            .alert("再試行項目を削除しますか？", isPresented: retryDiscardPresented, presenting: retryDiscardTarget) { record in
+                Button("削除", role: .destructive) {
+                    discardRetry(record)
+                }
+                Button("キャンセル", role: .cancel) { retryDiscardTarget = nil }
+            } message: { record in
+                Text("「\(record.title)」の転送エラーと再試行情報を削除します。iPhoneライブラリの音声は残ります。")
             }
             .alert("操作を完了できませんでした", isPresented: errorPresented) {
                 Button("OK") { errorMessage = nil }
@@ -116,6 +126,13 @@ struct WatchTransfersView: View {
         )
     }
 
+    private var retryDiscardPresented: Binding<Bool> {
+        Binding(
+            get: { retryDiscardTarget != nil },
+            set: { if !$0 { retryDiscardTarget = nil } }
+        )
+    }
+
     private func thumbnailURL(for videoID: String) -> URL? {
         guard let audio = savedAudio(for: videoID) else { return nil }
         return environment.library.thumbnailURL(for: audio)
@@ -130,7 +147,7 @@ struct WatchTransfersView: View {
             requestDeletion(record)
             return
         }
-        if record.state == .reconciliationRequired {
+        if record.requiresFreshSnapshotForRetry {
             guard let audio = savedAudio(for: record.youtubeID) else {
                 errorMessage = "iPhoneの元音声がないため再転送できません。Watchから削除するか、音声をもう一度iPhoneへ保存してください。"
                 return
@@ -169,6 +186,15 @@ struct WatchTransfersView: View {
         defer { deletionTarget = nil }
         do {
             try environment.watchTransfers.requestDeletion(videoID: record.youtubeID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func discardRetry(_ record: WatchTransferRecord) {
+        defer { retryDiscardTarget = nil }
+        do {
+            try environment.watchTransfers.discardRetry(videoID: record.youtubeID)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -369,6 +395,7 @@ private struct WatchTransferRow: View {
     let liveProgress: Double?
     let onRetry: () -> Void
     let onCancel: () -> Void
+    let onDiscardRetry: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -396,14 +423,26 @@ private struct WatchTransferRow: View {
                 Spacer(minLength: 0)
             }
 
-        if record.state.isPendingTransfer {
-                ProgressView(value: progress) {
-                    Text("\(Int((progress * 100).rounded()))%")
-                        .monospacedDigit()
+            if record.state.isPendingTransfer {
+                if record.state == .awaitingWatchConfirmation {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .tint(PodPalette.violet)
+                        Text("転送済み・Watchの取り込み完了を待っています")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("転送済み。Apple Watchの取り込み完了を待っています")
+                } else {
+                    ProgressView(value: progress) {
+                        Text("\(displayedPercentage)%")
+                            .monospacedDigit()
+                    }
+                    .tint(PodPalette.violet)
+                    .accessibilityLabel("転送進捗")
+                    .accessibilityValue("\(displayedPercentage)パーセント")
                 }
-                .tint(PodPalette.violet)
-                .accessibilityLabel("転送進捗")
-                .accessibilityValue("\(Int((progress * 100).rounded()))パーセント")
             }
 
             if let message = record.lastErrorMessage,
@@ -415,7 +454,7 @@ private struct WatchTransferRow: View {
             }
 
             actionBar
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: actionBarAlignment)
         }
         .padding(12)
         .podCard()
@@ -430,29 +469,31 @@ private struct WatchTransferRow: View {
                 .buttonStyle(.bordered)
                 .tint(.red)
         case .failed:
-            Button(
-                record.isWatchDeletionFailure ? "削除を再試行" : "再試行",
-                systemImage: record.isWatchDeletionFailure ? "trash" : "arrow.clockwise",
-                action: onRetry
-            )
-                .buttonStyle(.borderedProminent)
-                .tint(PodPalette.violet)
+            if record.isWatchDeletionFailure {
+                Button("削除を再試行", systemImage: "trash", action: onRetry)
+                    .buttonStyle(.borderedProminent)
+                    .tint(PodPalette.violet)
+            } else {
+                retryActionBar
+            }
         case .reconciliationRequired:
             if record.isWatchDeletionFailure {
                 Button("削除を再試行", systemImage: "trash", action: onRetry)
                     .buttonStyle(.borderedProminent)
                     .tint(PodPalette.violet)
             } else if canRecreateTransfer {
-                Button("再転送", systemImage: "arrow.clockwise", action: onRetry)
-                    .buttonStyle(.borderedProminent)
-                    .tint(PodPalette.violet)
+                retryActionBar
             } else {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .trailing, spacing: 8) {
                     Text("iPhoneに元音声がないため再転送できません。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Watchから削除", systemImage: "trash", role: .destructive, action: onDelete)
-                        .buttonStyle(.bordered)
+                    HStack(spacing: 8) {
+                        Button("削除", systemImage: "trash", role: .destructive, action: onDiscardRetry)
+                            .buttonStyle(.bordered)
+                        Button("Watchから削除", systemImage: "applewatch.slash", role: .destructive, action: onDelete)
+                            .buttonStyle(.bordered)
+                    }
                 }
             }
         case .availableOnWatch:
@@ -471,8 +512,33 @@ private struct WatchTransferRow: View {
         }
     }
 
+    private var actionBarAlignment: Alignment {
+        record.state == .availableOnWatch ? .leading : .trailing
+    }
+
+    private var retryActionBar: some View {
+        HStack(spacing: 8) {
+            Button("削除", systemImage: "trash", role: .destructive, action: onDiscardRetry)
+                .buttonStyle(.bordered)
+            Button(
+                record.state == .reconciliationRequired ? "再転送" : "再試行",
+                systemImage: "arrow.clockwise",
+                action: onRetry
+            )
+                .buttonStyle(.borderedProminent)
+                .tint(PodPalette.violet)
+        }
+    }
+
     private var progress: Double {
         min(max(liveProgress ?? record.lastKnownProgress, 0), 1)
+    }
+
+    private var displayedPercentage: Int {
+        // WCSession progress can reach (or round to) 100% before the
+        // didFinish callback. Reserve 100% for the completed delivery phase
+        // so the UI never presents an in-flight transfer as finished.
+        min(Int((progress * 100).rounded(.down)), 99)
     }
 
     private var stateText: String {
@@ -506,11 +572,5 @@ private struct WatchTransferRow: View {
         case .failed, .reconciliationRequired: .red
         default: PodPalette.violet
         }
-    }
-}
-
-extension WatchTransferRecord {
-    var isWatchDeletionFailure: Bool {
-        lastErrorCode == "watch-delete" || lastErrorCode == "delete-send"
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SwiftData
 
 enum WatchIncomingRevisionDisposition: Equatable, Sendable {
@@ -265,6 +266,28 @@ final class WatchAudioLibraryService {
         // Never interpret a SwiftData read failure as an empty library: doing
         // so would turn a transient/corrupt-store error into media deletion.
         let savedAudio = try modelContext.fetch(FetchDescriptor<WatchSavedAudio>())
+        var repairedDuration = false
+        for saved in savedAudio {
+            guard let url = audioURL(for: saved),
+                  let containerDuration = try? ISOBaseMediaDurationReader.normalizedDuration(at: url),
+                  abs(saved.duration - containerDuration) > 0.1 else {
+                continue
+            }
+            let previousDuration = saved.duration
+            saved.duration = containerDuration
+            saved.lastPlaybackPosition = min(
+                max(saved.lastPlaybackPosition, 0),
+                containerDuration
+            )
+            repairedDuration = true
+            WatchSyncLog.watchReceiver.notice(
+                "duration_repaired video=\(saved.youtubeID, privacy: .public) old=\(previousDuration) new=\(containerDuration)"
+            )
+        }
+        if repairedDuration {
+            try metadata().advanceGeneration()
+            try saveChanges(modelContext)
+        }
         let retainedAudio = Set(savedAudio.compactMap(\.safeAudioRelativePath))
         let retainedArtwork = Set(savedAudio.compactMap(\.safeThumbnailRelativePath))
         try removeOrphans(in: Self.audioDirectory, retaining: retainedAudio)

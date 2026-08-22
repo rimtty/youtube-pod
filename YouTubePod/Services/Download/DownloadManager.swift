@@ -17,7 +17,9 @@ final class DownloadManager {
         extractor: any AudioExtracting,
         library: any AudioLibraryManaging,
         extractionRetryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)],
-        maximumConcurrentDownloads: Int = 3
+        // The embedded CPython/WebKit challenge runtime is process-global.
+        // Keep user taps queued instead of constructing overlapping web views.
+        maximumConcurrentDownloads: Int = 1
     ) {
         precondition(maximumConcurrentDownloads > 0)
         self.extractor = extractor

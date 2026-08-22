@@ -89,6 +89,19 @@ final class WatchSessionReceiver {
         await task.value
     }
 
+    /// A foreground transition is an opportunity to recover a WCSession inbox
+    /// that the system kept pending while the Watch app was suspended. Keep
+    /// handler installation idempotent, but request a fresh peer activation on
+    /// subsequent transitions before scanning the durable inbox.
+    func resumeFromForeground() async {
+        let wasStarted = hasStarted
+        start()
+        if wasStarted {
+            peer.activate()
+        }
+        await synchronizeNow()
+    }
+
     /// Keeps the SwiftUI Watch Connectivity background task alive until the
     /// WCSession inbox is drained and every durable receipt has reached an
     /// idle synchronization boundary. Returning from this method completes the

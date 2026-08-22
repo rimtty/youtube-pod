@@ -258,6 +258,29 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         await drainQueuedTransfersIfPossible()
     }
 
+    func discardRetry(videoID: String) throws {
+        guard let record = record(videoID: videoID) else { return }
+        guard record.state == .failed || record.state == .reconciliationRequired,
+              !record.isWatchDeletionFailure else {
+            throw WatchTransferServiceError.discardUnavailable
+        }
+
+        let transferID = record.transferID
+        cancelScheduledTasks(videoID: videoID)
+        transport.cancelFiles(transferID: transferID)
+        liveProgress[videoID] = nil
+        lastProgressSaveAt[transferID] = nil
+        sessionStartedTransferIDs.remove(transferID)
+        modelContext.delete(record)
+        guard persistChanges() else {
+            throw WatchTransferServiceError.persistence(
+                lastPersistenceError ?? "再試行項目を削除できませんでした。"
+            )
+        }
+        Task { await snapshots.removeTransfer(transferID) }
+        scheduleQueuedTransfersIfNeeded()
+    }
+
     func requestDeletion(videoID: String) throws {
         guard connectionStatus.canTransfer else {
             throw WatchTransferServiceError.watchUnavailable
@@ -1045,6 +1068,7 @@ private extension WatchTransferState {
 enum WatchTransferServiceError: LocalizedError {
     case watchUnavailable
     case retryUnavailable
+    case discardUnavailable
     case deletionUnavailable
     case persistence(String)
 
@@ -1054,6 +1078,8 @@ enum WatchTransferServiceError: LocalizedError {
             "ペアリング済みApple WatchとWatchアプリを確認してください。"
         case .retryUnavailable:
             "この転送は再試行できません。"
+        case .discardUnavailable:
+            "この項目は再試行一覧から削除できません。"
         case .deletionUnavailable:
             "この項目はApple Watchから削除できません。"
         case .persistence(let message):

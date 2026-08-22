@@ -19,10 +19,6 @@ struct WatchNowPlayingView: View {
                     VStack(spacing: contentSpacing) {
                         artwork(for: item)
                         metadata(for: item)
-                        WatchSystemVolumeControl()
-                            .frame(height: 24)
-                            .padding(.horizontal, 12)
-                            .accessibilityIdentifier("watch.now-playing.system-volume-control")
                         timeline
                         if let playbackError = player.playbackError {
                             playbackErrorView(playbackError)
@@ -143,6 +139,11 @@ struct WatchNowPlayingView: View {
             }
             .font(.caption2.monospacedDigit())
             .foregroundStyle(.white.opacity(0.62))
+
+            WatchSystemVolumeControl()
+                .frame(height: 20)
+                .offset(y: -10)
+                .accessibilityIdentifier("watch.now-playing.system-volume-control")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
@@ -251,8 +252,8 @@ struct WatchNowPlayingView: View {
     }
 }
 
-/// Uses the system output-volume presentation and lets watchOS own Digital
-/// Crown direction, haptics, and route-aware volume changes.
+/// Uses watchOS' standard local-volume control so the system owns the visual
+/// presentation, Digital Crown direction, haptics, and route-aware changes.
 private struct WatchSystemVolumeControl: WKInterfaceObjectRepresentable {
     func makeWKInterfaceObject(context: Context) -> WKInterfaceVolumeControl {
         let control = WKInterfaceVolumeControl(origin: .local)
