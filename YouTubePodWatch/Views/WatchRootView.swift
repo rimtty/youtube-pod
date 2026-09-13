@@ -39,6 +39,7 @@ struct WatchRootView: View {
                 WatchPodBackground()
 
                 VStack(spacing: 4) {
+                    pendingTransfersBanner
                     receiverStatus
 
                     if audios.isEmpty {
@@ -154,9 +155,54 @@ struct WatchRootView: View {
         .accessibilityElement(children: .combine)
     }
 
+    private var pendingBanner: WatchPendingTransfersBanner? {
+        WatchUIPresentation.pendingTransfersBanner(summary: receiver.pendingTransfers, now: .now)
+    }
+
+    @ViewBuilder
+    private var pendingTransfersBanner: some View {
+        if let banner = pendingBanner {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(WatchPodPalette.lilac)
+                    Text(banner.headline)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(2)
+                }
+                if let title = banner.activeTitle {
+                    Text(title)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(1)
+                }
+                Text(banner.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.72))
+                Text(banner.settingsHint)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                reduceTransparency
+                    ? AnyShapeStyle(WatchPodPalette.deepTurquoise)
+                    : AnyShapeStyle(.thinMaterial),
+                in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+            )
+            .padding(.horizontal, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("watch.receiver.pending")
+        }
+    }
+
     @ViewBuilder
     private var receiverStatus: some View {
-        if receiver.isReceiving {
+        if receiver.isReceiving, pendingBanner == nil {
             HStack(spacing: 7) {
                 ProgressView()
                     .controlSize(.small)

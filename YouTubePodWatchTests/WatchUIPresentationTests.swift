@@ -2,6 +2,49 @@ import XCTest
 @testable import YouTubePodWatch
 
 final class WatchUIPresentationTests: XCTestCase {
+    func testPendingTransfersBannerShowsCountSizeAndActiveTitle() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let summary = WatchPendingTransfersSummary(
+            queuedCount: 1,
+            transferringCount: 1,
+            totalBytes: 49_157_351,
+            activeYouTubeID: "dQw4w9WgXcQ",
+            activeTitle: "Sending now",
+            publishedAt: now.addingTimeInterval(-60)
+        )
+
+        let banner = try XCTUnwrap(WatchUIPresentation.pendingTransfersBanner(summary: summary, now: now))
+
+        let size = ByteCountFormatter.string(fromByteCount: 49_157_351, countStyle: .file)
+        XCTAssertEqual(banner.headline, "iPhoneから2件受信中（\(size)）")
+        XCTAssertEqual(banner.detail, "Watchを開いたままにしてください")
+        XCTAssertTrue(banner.settingsHint.contains("時計に戻る"))
+        XCTAssertEqual(banner.activeTitle, "Sending now")
+    }
+
+    func testPendingTransfersBannerHidesWhenEmptyMissingOrStale() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertNil(WatchUIPresentation.pendingTransfersBanner(summary: nil, now: now))
+        XCTAssertNil(WatchUIPresentation.pendingTransfersBanner(
+            summary: .none(at: now),
+            now: now
+        ))
+        let stale = WatchPendingTransfersSummary(
+            queuedCount: 1,
+            transferringCount: 0,
+            totalBytes: 1,
+            publishedAt: now.addingTimeInterval(-WatchUIPresentation.pendingTransfersStaleAfter - 1)
+        )
+        XCTAssertNil(WatchUIPresentation.pendingTransfersBanner(summary: stale, now: now))
+        let fresh = WatchPendingTransfersSummary(
+            queuedCount: 1,
+            transferringCount: 0,
+            totalBytes: 1,
+            publishedAt: now.addingTimeInterval(-WatchUIPresentation.pendingTransfersStaleAfter + 1)
+        )
+        XCTAssertNotNil(WatchUIPresentation.pendingTransfersBanner(summary: fresh, now: now))
+    }
+
     func testCurrentItemUsesLiveProgressInsteadOfPersistedProgress() {
         let progress = WatchUIPresentation.playbackProgress(
             duration: 200,

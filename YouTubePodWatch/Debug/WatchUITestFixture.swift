@@ -31,6 +31,10 @@ enum WatchUITestFixture {
         ProcessInfo.processInfo.arguments.contains("--watch-ui-test-reduce-motion")
     }
 
+    static var showsPendingTransfers: Bool {
+        ProcessInfo.processInfo.arguments.contains("--watch-ui-test-pending-transfers")
+    }
+
     static func makeComposition() throws -> Composition {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
@@ -122,7 +126,17 @@ enum WatchUITestFixture {
             }
         )
         receiver.installUITestFixture(
-            errorMessage: "iPhoneとの同期を確認できませんでした。再同期してください。"
+            errorMessage: "iPhoneとの同期を確認できませんでした。再同期してください。",
+            pendingTransfers: showsPendingTransfers
+                ? WatchPendingTransfersSummary(
+                    queuedCount: 1,
+                    transferringCount: 1,
+                    totalBytes: 83_600_000,
+                    activeYouTubeID: "hqYs0LGbg-E",
+                    activeTitle: "転送中のエピソード",
+                    publishedAt: .now
+                )
+                : nil
         )
 
         let playableURLs = [playable.youtubeID: playableURL]
@@ -160,6 +174,7 @@ private final class WatchUITestPeerSyncService: WatchPeerSyncing {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
     var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)?
+    var pendingTransfersHandler: (@MainActor @Sendable (WatchPendingTransfersSummary) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
     var hasContentPending: Bool { false }
 
@@ -169,5 +184,6 @@ private final class WatchUITestPeerSyncService: WatchPeerSyncing {
     func enqueueAcknowledgement(_ acknowledgement: WatchTransferAcknowledgement) throws {}
     func publishInventory(_ inventory: WatchInventorySnapshot) throws {}
     func currentInventoryRequest() -> WatchInventoryRequest? { nil }
+    func currentPendingTransfers() -> WatchPendingTransfersSummary? { nil }
 }
 #endif

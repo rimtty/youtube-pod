@@ -25,7 +25,11 @@ struct WatchTransfersView: View {
                     Section {
                         WatchConnectionCard(
                             status: environment.watchTransfers.connectionStatus,
-                            inventory: environment.watchTransfers.latestInventory
+                            inventory: environment.watchTransfers.latestInventory,
+                            showsKeepWatchOpenHint: WatchTransferHintPresentation.showsKeepWatchOpenHint(
+                                records: visibleRecords,
+                                status: environment.watchTransfers.connectionStatus
+                            )
                         )
                         .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                         .listRowSeparator(.hidden)
@@ -356,6 +360,7 @@ struct WatchTransferActionButton: View {
 private struct WatchConnectionCard: View {
     let status: WatchConnectionStatus
     let inventory: WatchInventorySnapshot?
+    let showsKeepWatchOpenHint: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -375,6 +380,15 @@ private struct WatchConnectionCard: View {
                 } else {
                     Text("Watchのライブラリ情報を待っています")
                         .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if showsKeepWatchOpenHint {
+                    Text(WatchTransferHintPresentation.keepWatchOpenText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(PodPalette.violet)
+                        .padding(.top, 3)
+                    Text(WatchTransferHintPresentation.returnToClockText)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }

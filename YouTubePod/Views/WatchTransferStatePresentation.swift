@@ -105,3 +105,18 @@ enum WatchTransferQueuePresentation {
         "Watchへ転送待ち（\(position + 1)番目）"
     }
 }
+
+/// watchOS throttles WCSession file transfers while the Watch app is not
+/// frontmost, and the app cannot extend that window itself (the former
+/// `isFrontmostTimeoutExtended` was removed in watchOS 7). Guide the user.
+enum WatchTransferHintPresentation {
+    static let keepWatchOpenText = "Watchで YouTube Pod を開いておくと転送が速く進みます"
+    static let returnToClockText = "Watchの「設定 > 一般 > 時計に戻る」で YouTube Pod を1時間にすると途切れにくくなります"
+
+    static func showsKeepWatchOpenHint(
+        records: [WatchTransferRecord],
+        status: WatchConnectionStatus
+    ) -> Bool {
+        status.canTransfer && records.contains { $0.state == .queued || $0.state == .transferring }
+    }
+}

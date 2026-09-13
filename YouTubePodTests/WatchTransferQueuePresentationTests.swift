@@ -28,6 +28,20 @@ final class WatchTransferQueuePresentationTests: XCTestCase {
         XCTAssertEqual(WatchTransferQueuePresentation.waitingText(position: 1), "Watchへ転送待ち（2番目）")
     }
 
+    func testKeepWatchOpenHintShowsOnlyWhilePendingAndConnected() {
+        let connected = WatchConnectionStatus(activation: .activated, isPaired: true, isWatchAppInstalled: true)
+        let disconnected = WatchConnectionStatus(activation: .activated, isPaired: false, isWatchAppInstalled: false)
+        let transferring = [record("hint0000001", state: .transferring, queuedAt: 1)]
+        let queued = [record("hint0000002", state: .queued, queuedAt: 1)]
+        let idle = [record("hint0000003", state: .availableOnWatch, queuedAt: 1), record("hint0000004", state: .preparing, queuedAt: 2)]
+
+        XCTAssertTrue(WatchTransferHintPresentation.showsKeepWatchOpenHint(records: transferring, status: connected))
+        XCTAssertTrue(WatchTransferHintPresentation.showsKeepWatchOpenHint(records: queued, status: connected))
+        XCTAssertFalse(WatchTransferHintPresentation.showsKeepWatchOpenHint(records: idle, status: connected))
+        XCTAssertFalse(WatchTransferHintPresentation.showsKeepWatchOpenHint(records: transferring, status: disconnected))
+        XCTAssertFalse(WatchTransferHintPresentation.showsKeepWatchOpenHint(records: [], status: connected))
+    }
+
     private func record(
         _ id: String,
         state: WatchTransferState,

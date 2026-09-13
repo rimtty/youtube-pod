@@ -210,19 +210,35 @@ final class WCSessionAdapterTests: XCTestCase {
             requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
 
-        try adapter.requestInventory(request)
-
-        XCTAssertEqual(driver.applicationContexts.count, 1)
-        XCTAssertEqual(
-            try WatchInventoryRequest.decode(
-                applicationContext: XCTUnwrap(driver.applicationContexts.first)
-            ),
-            request
+        let summary = WatchPendingTransfersSummary(
+            queuedCount: 1,
+            transferringCount: 1,
+            totalBytes: 2_048,
+            activeYouTubeID: "dQw4w9WgXcQ",
+            activeTitle: "Active",
+            publishedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
+        let context = WatchPhoneApplicationContext(inventoryRequest: request, pendingTransfers: summary)
+
+        try adapter.publishApplicationContext(context)
+
+        // Both payloads must share one dictionary: updateApplicationContext
+        // replaces the counterpart's whole context.
+        XCTAssertEqual(driver.applicationContexts.count, 1)
+        let sent = try XCTUnwrap(driver.applicationContexts.first)
+        XCTAssertEqual(try WatchInventoryRequest.decode(applicationContext: sent), request)
+        XCTAssertEqual(try WatchPendingTransfersSummary.decode(applicationContext: sent), summary)
         XCTAssertTrue(driver.userInfos.isEmpty)
 
+        try adapter.publishApplicationContext(
+            WatchPhoneApplicationContext(inventoryRequest: nil, pendingTransfers: summary)
+        )
+        let summaryOnly = try XCTUnwrap(driver.applicationContexts.last)
+        XCTAssertNil(summaryOnly[WatchInventoryRequest.applicationContextKey])
+        XCTAssertEqual(try WatchPendingTransfersSummary.decode(applicationContext: summaryOnly), summary)
+
         driver.activationState = .inactive
-        XCTAssertThrowsError(try adapter.requestInventory(request)) { error in
+        XCTAssertThrowsError(try adapter.publishApplicationContext(context)) { error in
             guard case WatchConnectivityAdapterError.unavailable = error else {
                 return XCTFail("Unexpected error: \(error)")
             }

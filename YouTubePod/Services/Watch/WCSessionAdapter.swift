@@ -80,12 +80,13 @@ final class WCSessionAdapter: NSObject, WatchConnectivityTransport {
         try driver.transferUserInfo(command.userInfo())
     }
 
-    func requestInventory(_ request: WatchInventoryRequest) throws {
+    func publishApplicationContext(_ context: WatchPhoneApplicationContext) throws {
         guard driver.isSupported else { throw WatchConnectivityAdapterError.unsupported }
         guard status.canTransfer else { throw WatchConnectivityAdapterError.unavailable }
-        try driver.updateApplicationContext(request.applicationContext())
+        try driver.updateApplicationContext(context.applicationContext())
+        let summary = context.pendingTransfers
         WatchSyncLog.phoneTransport.notice(
-            "inventory_requested request=\(request.requestID.uuidString, privacy: .public)"
+            "application_context_published request=\(context.inventoryRequest?.requestID.uuidString ?? "none", privacy: .public) pending=\(summary.pendingCount) bytes=\(summary.totalBytes)"
         )
     }
 

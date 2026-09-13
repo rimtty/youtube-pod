@@ -335,6 +335,54 @@ struct WatchPeerSyncServiceTests {
     }
 
     @Test @MainActor
+    func applicationContextDeliversPendingTransfersIndependentlyOfInventoryRequest() async throws {
+        let fixture = try makeFixture(isActivated: true)
+        let recorder = PeerCallbackRecorder()
+        fixture.service.inventoryRequestHandler = { request in
+            recorder.inventoryRequests.append(request)
+        }
+        fixture.service.pendingTransfersHandler = { summary in
+            recorder.pendingTransfers.append(summary)
+        }
+        let request = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let summary = WatchPendingTransfersSummary(
+            queuedCount: 2,
+            transferringCount: 1,
+            totalBytes: 12_345,
+            activeYouTubeID: "dQw4w9WgXcQ",
+            activeTitle: "Active",
+            publishedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        let merged = try WatchPhoneApplicationContext(
+            inventoryRequest: request,
+            pendingTransfers: summary
+        ).applicationContext()
+
+        // Summary only: must not be dropped because the request key is absent.
+        fixture.service.handleReceivedApplicationContext(try summary.applicationContext())
+        // Both keys in one dictionary: both handlers fire.
+        fixture.service.handleReceivedApplicationContext(merged)
+        // Malformed summary bytes: neither handler fires.
+        fixture.service.handleReceivedApplicationContext(
+            [WatchPendingTransfersSummary.applicationContextKey: Data("junk".utf8)]
+        )
+        await Task.yield()
+        await Task.yield()
+
+        #expect(recorder.pendingTransfers == [summary, summary])
+        #expect(recorder.inventoryRequests == [request])
+
+        fixture.driver.receivedApplicationContext = merged
+        #expect(fixture.service.currentPendingTransfers() == summary)
+        #expect(fixture.service.currentInventoryRequest() == request)
+        fixture.driver.receivedApplicationContext = [:]
+        #expect(fixture.service.currentPendingTransfers() == nil)
+    }
+
+    @Test @MainActor
     func outboundDeliveryRequiresActivatedSession() throws {
         let fixture = try makeFixture(isActivated: false)
         let acknowledgement = WatchTransferAcknowledgement(
@@ -658,6 +706,7 @@ private final class PeerCallbackRecorder {
     var stagedFiles: [StagedWatchTransferFile] = []
     var commands: [StagedWatchLibraryCommand] = []
     var inventoryRequests: [WatchInventoryRequest] = []
+    var pendingTransfers: [WatchPendingTransfersSummary] = []
 }
 
 private enum TestDriverError: Error, Equatable {

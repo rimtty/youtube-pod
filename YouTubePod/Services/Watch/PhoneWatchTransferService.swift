@@ -26,7 +26,11 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     /// in this process. Reconciliation must not treat them as abandoned.
     private var preparingTransferIDs: Set<UUID> = []
     private var pendingInventoryRequest: WatchInventoryRequest?
-    private var publishedInventoryRequestID: UUID?
+    /// Last application context accepted by WCSession, used to skip
+    /// publishing an identical payload. Reset on foreground so the Watch is
+    /// notified again even when nothing changed.
+    private var lastPublishedContext: WatchPhoneApplicationContext?
+    private var applicationContextPublishIsScheduled = false
 
     private(set) var connectionStatus: WatchConnectionStatus
     private(set) var liveProgress: [String: Double] = [:]
@@ -89,7 +93,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             }
         }
         transport.activate()
-        publishPendingInventoryRequestIfPossible()
+        publishApplicationContextIfNeeded()
     }
 
     /// Re-establishes every volatile synchronization boundary after iPhone
@@ -101,7 +105,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         do {
             try inventoryRequestStore.save(request)
             pendingInventoryRequest = request
-            publishedInventoryRequestID = nil
+            lastPublishedContext = nil
             lastPersistenceError = nil
         } catch {
             lastPersistenceError = error.localizedDescription
@@ -112,7 +116,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             "foreground_resume request=\(request.requestID.uuidString, privacy: .public)"
         )
         transport.activate()
-        publishPendingInventoryRequestIfPossible()
+        publishApplicationContextIfNeeded()
     }
 
     func enqueue(_ source: WatchTransferSource) async throws {
@@ -163,6 +167,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         }
         do {
             try modelContext.save()
+            scheduleApplicationContextPublish()
             lastPersistenceError = nil
         } catch {
             modelContext.rollback()
@@ -238,6 +243,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.queuedAt = .now
             record.updatedAt = .now
             try modelContext.save()
+            scheduleApplicationContextPublish()
             if let previousTransferID, previousTransferID != transferID {
                 await snapshots.removeTransfer(previousTransferID)
             }
@@ -328,6 +334,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         current.updatedAt = .now
         do {
             try modelContext.save()
+            scheduleApplicationContextPublish()
             lastPersistenceError = nil
         } catch {
             modelContext.rollback()
@@ -414,7 +421,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             // didFinish callback could hold the serial queue forever.
             sessionStartedTransferIDs.removeAll()
             if status.canTransfer {
-                publishPendingInventoryRequestIfPossible()
+                publishApplicationContextIfNeeded()
                 resendPendingDeletionCommands()
                 Task { @MainActor [weak self] in
                     await self?.reconcileAndResumeTransfers()
@@ -662,7 +669,6 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             do {
                 try inventoryRequestStore.clear()
                 pendingInventoryRequest = nil
-                publishedInventoryRequestID = nil
             } catch {
                 lastPersistenceError = error.localizedDescription
             }
@@ -689,15 +695,33 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         _ = persistChanges()
     }
 
-    private func publishPendingInventoryRequestIfPossible() {
-        guard connectionStatus.canTransfer,
-              let request = pendingInventoryRequest,
-              publishedInventoryRequestID != request.requestID else { return }
+    /// Single funnel for WCSession application context. The inventory request
+    /// and the pending-transfers summary travel in one dictionary because
+    /// `updateApplicationContext` replaces the counterpart's whole context.
+    private func publishApplicationContextIfNeeded() {
+        guard connectionStatus.canTransfer else { return }
+        let context = WatchPhoneApplicationContext(
+            inventoryRequest: pendingInventoryRequest,
+            pendingTransfers: .make(records: fetchRecords(), at: now())
+        )
+        if let lastPublishedContext, lastPublishedContext.hasSameContent(as: context) { return }
         do {
-            try transport.requestInventory(request)
-            publishedInventoryRequestID = request.requestID
+            try transport.publishApplicationContext(context)
+            lastPublishedContext = context
         } catch {
             lastPersistenceError = error.localizedDescription
+        }
+    }
+
+    /// Coalesces the publishes triggered by a burst of state changes (for
+    /// example the drain loop moving several records to `.transferring`).
+    private func scheduleApplicationContextPublish() {
+        guard !applicationContextPublishIsScheduled else { return }
+        applicationContextPublishIsScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.applicationContextPublishIsScheduled = false
+            self.publishApplicationContextIfNeeded()
         }
     }
 
@@ -822,6 +846,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
 
             do {
                 try modelContext.save()
+                scheduleApplicationContextPublish()
                 sessionStartedTransferIDs.insert(record.transferID)
                 lastPersistenceError = nil
             } catch {
@@ -1159,6 +1184,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         do {
             try modelContext.save()
             lastPersistenceError = nil
+            scheduleApplicationContextPublish()
             return true
         } catch {
             lastPersistenceError = error.localizedDescription
