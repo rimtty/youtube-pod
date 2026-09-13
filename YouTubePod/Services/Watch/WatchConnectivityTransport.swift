@@ -56,7 +56,8 @@ protocol WatchConnectivityTransport: AnyObject {
     func activate()
     func outstandingFiles() -> [OutstandingWatchFile]
     func enqueueFile(at url: URL, envelope: WatchTransferEnvelope) throws
-    func requestInventory(_ request: WatchInventoryRequest) throws
+    /// Replaces the counterpart's application context with `context`.
+    func publishApplicationContext(_ context: WatchPhoneApplicationContext) throws
     func sendDeletionCommand(_ command: WatchLibraryCommand) throws
     func cancelFiles(transferID: UUID)
 }

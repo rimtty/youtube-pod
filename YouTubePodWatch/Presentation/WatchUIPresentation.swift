@@ -10,8 +10,36 @@ struct WatchPlaybackErrorPresentation: Equatable, Sendable {
     let symbolName: String
 }
 
+struct WatchPendingTransfersBanner: Equatable, Sendable {
+    let headline: String
+    let detail: String
+    let settingsHint: String
+    let activeTitle: String?
+}
+
 /// Pure presentation decisions shared by the Watch UI and its unit tests.
 enum WatchUIPresentation {
+    /// A stale announcement (iPhone app removed, never relaunched) must not
+    /// keep the banner up forever.
+    static let pendingTransfersStaleAfter: TimeInterval = 24 * 60 * 60
+
+    static func pendingTransfersBanner(
+        summary: WatchPendingTransfersSummary?,
+        now: Date
+    ) -> WatchPendingTransfersBanner? {
+        guard let summary, summary.pendingCount > 0,
+              now.timeIntervalSince(summary.publishedAt) <= pendingTransfersStaleAfter else {
+            return nil
+        }
+        let size = ByteCountFormatter.string(fromByteCount: summary.totalBytes, countStyle: .file)
+        return WatchPendingTransfersBanner(
+            headline: "iPhoneから\(summary.pendingCount)件受信中（\(size)）",
+            detail: "Watchを開いたままにしてください",
+            settingsHint: "設定 > 一般 > 時計に戻る で YouTube Pod を1時間にすると途切れにくくなります",
+            activeTitle: summary.activeTitle
+        )
+    }
+
     static func receiverErrorLayout(isAccessibilitySize: Bool) -> WatchReceiverErrorLayout {
         isAccessibilitySize ? .compact : .detailed
     }

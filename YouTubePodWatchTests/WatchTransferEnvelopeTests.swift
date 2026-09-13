@@ -159,6 +159,70 @@ struct WatchTransferEnvelopeTests {
         }
     }
 
+    @Test func pendingTransfersSummaryRoundTripsAndFailsClosed() throws {
+        let summary = WatchPendingTransfersSummary(
+            queuedCount: 1,
+            transferringCount: 2,
+            totalBytes: 98_765,
+            activeYouTubeID: "dQw4w9WgXcQ",
+            activeTitle: "Now sending",
+            publishedAt: Date(timeIntervalSince1970: 1_700_000_300)
+        )
+
+        let decoded = try WatchPendingTransfersSummary.decode(
+            applicationContext: summary.applicationContext()
+        )
+        #expect(decoded == summary)
+        #expect(throws: WatchTransferProtocolError.missingEnvelope) {
+            try WatchPendingTransfersSummary.decode(applicationContext: [:])
+        }
+        #expect(throws: WatchTransferProtocolError.malformedPayload) {
+            try WatchPendingTransfersSummary.decode(
+                applicationContext: [WatchPendingTransfersSummary.applicationContextKey: Data("x".utf8)]
+            )
+        }
+        #expect(throws: WatchTransferProtocolError.malformedPayload) {
+            try WatchPendingTransfersSummary(queuedCount: -1, transferringCount: 0, totalBytes: 0, publishedAt: .now)
+                .validated()
+        }
+        #expect(throws: WatchTransferProtocolError.invalidFileSize) {
+            try WatchPendingTransfersSummary(queuedCount: 0, transferringCount: 0, totalBytes: -1, publishedAt: .now)
+                .validated()
+        }
+        #expect(throws: WatchTransferProtocolError.invalidYouTubeID) {
+            try WatchPendingTransfersSummary(
+                queuedCount: 1, transferringCount: 0, totalBytes: 1, activeYouTubeID: "bad", publishedAt: .now
+            ).validated()
+        }
+        #expect(throws: WatchTransferProtocolError.malformedPayload) {
+            try WatchPendingTransfersSummary(
+                queuedCount: 0, transferringCount: 0, totalBytes: 0, activeTitle: "Stale", publishedAt: .now
+            ).validated()
+        }
+    }
+
+    @Test func phoneApplicationContextCarriesBothPayloadsInOneDictionary() throws {
+        let request = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_200)
+        )
+        let summary = WatchPendingTransfersSummary.none(at: Date(timeIntervalSince1970: 1_700_000_201))
+
+        let merged = try WatchPhoneApplicationContext(
+            inventoryRequest: request,
+            pendingTransfers: summary
+        ).applicationContext()
+        #expect(try WatchInventoryRequest.decode(applicationContext: merged) == request)
+        #expect(try WatchPendingTransfersSummary.decode(applicationContext: merged) == summary)
+
+        let summaryOnly = try WatchPhoneApplicationContext(
+            inventoryRequest: nil,
+            pendingTransfers: summary
+        ).applicationContext()
+        #expect(summaryOnly[WatchInventoryRequest.applicationContextKey] == nil)
+        #expect(try WatchPendingTransfersSummary.decode(applicationContext: summaryOnly) == summary)
+    }
+
     @Test func inventoryWithoutResponseCorrelationRemainsDecodable() throws {
         let legacyPayload = """
         {

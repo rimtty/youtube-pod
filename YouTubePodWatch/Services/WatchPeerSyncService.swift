@@ -6,6 +6,7 @@ protocol WatchPeerSyncing: AnyObject {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)? { get set }
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)? { get set }
     var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)? { get set }
+    var pendingTransfersHandler: (@MainActor @Sendable (WatchPendingTransfersSummary) -> Void)? { get set }
     var activationHandler: (@MainActor @Sendable () -> Void)? { get set }
     var hasContentPending: Bool { get }
 
@@ -15,6 +16,7 @@ protocol WatchPeerSyncing: AnyObject {
     func enqueueAcknowledgement(_ acknowledgement: WatchTransferAcknowledgement) throws
     func publishInventory(_ inventory: WatchInventorySnapshot) throws
     func currentInventoryRequest() -> WatchInventoryRequest?
+    func currentPendingTransfers() -> WatchPendingTransfersSummary?
 }
 
 struct WatchConnectivityWaitPolicy: Equatable, Sendable {
@@ -50,6 +52,7 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
     var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)?
+    var pendingTransfersHandler: (@MainActor @Sendable (WatchPendingTransfersSummary) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
 
     init(
@@ -158,6 +161,12 @@ final class WatchWCSessionPeerSyncService: NSObject, WatchPeerSyncing {
             applicationContext: driver.receivedApplicationContext
         )
     }
+
+    func currentPendingTransfers() -> WatchPendingTransfersSummary? {
+        try? WatchPendingTransfersSummary.decode(
+            applicationContext: driver.receivedApplicationContext
+        )
+    }
 }
 
 extension WatchWCSessionPeerSyncService: WCSessionDelegate {
@@ -239,14 +248,23 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
     nonisolated func handleReceivedApplicationContext(
         _ applicationContext: [String: Any]
     ) {
-        guard let request = Self.normalizedInventoryRequest(
-            applicationContext: applicationContext
-        ) else { return }
-        WatchSyncLog.watchPeer.notice(
-            "inventory_request_received request=\(request.requestID.uuidString, privacy: .public)"
-        )
-        Task { @MainActor [weak self] in
-            self?.inventoryRequestHandler?(request)
+        // The two keys are independent: iPhone publishes them together, but
+        // a context that carries only one must still reach its handler.
+        if let request = Self.normalizedInventoryRequest(applicationContext: applicationContext) {
+            WatchSyncLog.watchPeer.notice(
+                "inventory_request_received request=\(request.requestID.uuidString, privacy: .public)"
+            )
+            Task { @MainActor [weak self] in
+                self?.inventoryRequestHandler?(request)
+            }
+        }
+        if let summary = Self.normalizedPendingTransfers(applicationContext: applicationContext) {
+            WatchSyncLog.watchPeer.notice(
+                "pending_transfers_received count=\(summary.pendingCount) bytes=\(summary.totalBytes)"
+            )
+            Task { @MainActor [weak self] in
+                self?.pendingTransfersHandler?(summary)
+            }
         }
     }
 
@@ -254,6 +272,12 @@ extension WatchWCSessionPeerSyncService: WCSessionDelegate {
         applicationContext: [String: Any]
     ) -> WatchInventoryRequest? {
         try? WatchInventoryRequest.decode(applicationContext: applicationContext)
+    }
+
+    nonisolated static func normalizedPendingTransfers(
+        applicationContext: [String: Any]
+    ) -> WatchPendingTransfersSummary? {
+        try? WatchPendingTransfersSummary.decode(applicationContext: applicationContext)
     }
 
     /// Persists a deletion command before the delegate callback returns.

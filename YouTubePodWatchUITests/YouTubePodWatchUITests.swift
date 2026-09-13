@@ -5,6 +5,7 @@ final class YouTubePodWatchUITests: XCTestCase {
     private enum AccessibilityID {
         static let compactReceiverError = "watch.receiver.error.compact"
         static let detailedReceiverError = "watch.receiver.error.detailed"
+        static let pendingTransfersBanner = "watch.receiver.pending"
         static let playableRow = "watch.library.row.uitest00001"
         static let missingFileRow = "watch.library.row.uitest00002"
         static let simulatorSyncRow = "watch.library.row.simulator01"
@@ -40,6 +41,24 @@ final class YouTubePodWatchUITests: XCTestCase {
         XCTAssertTrue(
             makeHittable(playableRow, in: app),
             "A playable row must remain scroll-reachable and tappable on the compact Watch display."
+        )
+    }
+
+    func testPendingTransfersBannerKeepsRetryControlReachableAtAccessibilitySize() {
+        let app = launchFixture(
+            additionalArguments: ["--watch-ui-test-accessibility-size", "--watch-ui-test-pending-transfers"]
+        )
+
+        let banner = element(AccessibilityID.pendingTransfersBanner, in: app)
+        XCTAssertTrue(banner.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            banner.label.contains("2件受信中"),
+            "The banner must announce how many transfers iPhone still has to deliver."
+        )
+        let compactError = element(AccessibilityID.compactReceiverError, in: app)
+        XCTAssertTrue(
+            makeHittable(compactError, in: app),
+            "The banner must not push the compact retry control out of reach."
         )
     }
 

@@ -27,14 +27,21 @@ final class WatchSessionReceiver {
 
     private(set) var isReceiving = false
     private(set) var lastErrorMessage: String?
+    /// What iPhone still has to deliver, as last announced through the
+    /// application context. iPhone republishes on every transfer state change.
+    private(set) var pendingTransfers: WatchPendingTransfersSummary?
 
 #if DEBUG
     /// Installs deterministic presentation state without activating a live
     /// WatchConnectivity session. Only the DEBUG UI-test composition calls it.
-    func installUITestFixture(errorMessage: String) {
+    func installUITestFixture(
+        errorMessage: String,
+        pendingTransfers: WatchPendingTransfersSummary? = nil
+    ) {
         guard !hasStarted else { return }
         isReceiving = false
         lastErrorMessage = errorMessage
+        self.pendingTransfers = pendingTransfers
     }
 #endif
 
@@ -68,7 +75,12 @@ final class WatchSessionReceiver {
         peer.inventoryRequestHandler = { [weak self] _ in
             self?.requestSynchronization()
         }
+        peer.pendingTransfersHandler = { [weak self] summary in
+            self?.pendingTransfers = summary
+        }
         peer.activationHandler = { [weak self] in
+            // receivedApplicationContext is only meaningful once activated.
+            self?.refreshPendingTransfers()
             self?.requestSynchronization()
         }
 
@@ -117,7 +129,16 @@ final class WatchSessionReceiver {
             return
         }
         WatchSyncLog.watchReceiver.notice("foreground_resume activation_ready")
+        refreshPendingTransfers()
         await synchronizeNow()
+    }
+
+    /// Rereads the phone's latest announcement. A delegate callback is not
+    /// guaranteed for an unchanged context, so every pass pulls as well.
+    private func refreshPendingTransfers() {
+        if let summary = peer.currentPendingTransfers() {
+            pendingTransfers = summary
+        }
     }
 
     /// Keeps the SwiftUI Watch Connectivity background task alive until the
@@ -292,6 +313,7 @@ final class WatchSessionReceiver {
             }
 
             guard flushAcknowledgements() else { return false }
+            refreshPendingTransfers()
             let inventoryRequest = peer.currentInventoryRequest()
             try peer.publishInventory(
                 library.inventory(

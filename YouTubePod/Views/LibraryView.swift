@@ -71,7 +71,18 @@ struct LibraryView: View {
                                     }
                                 }
                             } header: {
-                                Text("\(audios.count)件・\(totalSizeText)")
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(audios.count)件・\(totalSizeText)")
+                                    if WatchTransferHintPresentation.showsKeepWatchOpenHint(
+                                        records: watchTransferRecords,
+                                        status: environment.watchTransfers.connectionStatus
+                                    ) {
+                                        Text(WatchTransferHintPresentation.keepWatchOpenText)
+                                            .font(.caption)
+                                            .foregroundStyle(PodPalette.violet)
+                                            .textCase(nil)
+                                    }
+                                }
                             }
                         }
                         .environment(\.editMode, $editMode)

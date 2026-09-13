@@ -97,6 +97,40 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertEqual(fixture.peer.acknowledgements.last?.outcome, .imported)
     }
 
+    func testPendingTransfersFollowPushActivationAndEachSynchronizationPass() async throws {
+        let fixture = try makeFixture()
+        let pushed = WatchPendingTransfersSummary(
+            queuedCount: 1,
+            transferringCount: 1,
+            totalBytes: 4_096,
+            activeYouTubeID: "dQw4w9WgXcQ",
+            activeTitle: "Pushed",
+            publishedAt: .now
+        )
+        XCTAssertNil(fixture.receiver.pendingTransfers)
+        fixture.receiver.start()
+
+        fixture.peer.emitPendingTransfers(pushed)
+        XCTAssertEqual(fixture.receiver.pendingTransfers, pushed)
+
+        // Activation rereads the context WCSession held before the delegate
+        // was installed.
+        let onActivation = WatchPendingTransfersSummary(queuedCount: 0, transferringCount: 1, totalBytes: 10, publishedAt: .now)
+        fixture.peer.pendingTransfers = onActivation
+        fixture.peer.emitActivation()
+        XCTAssertEqual(fixture.receiver.pendingTransfers, onActivation)
+
+        let afterPass = WatchPendingTransfersSummary.none(at: .now)
+        fixture.peer.pendingTransfers = afterPass
+        await fixture.receiver.synchronizeNow()
+        XCTAssertEqual(fixture.receiver.pendingTransfers, afterPass)
+
+        // A peer without any announcement keeps the last known value.
+        fixture.peer.pendingTransfers = nil
+        await fixture.receiver.synchronizeNow()
+        XCTAssertEqual(fixture.receiver.pendingTransfers, afterPass)
+    }
+
     func testEachSynchronizationPassRereadsRequestAndPublishesCorrelation() async throws {
         let fixture = try makeFixture()
         let first = WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
@@ -720,8 +754,10 @@ private final class ReceiverPeerStub: WatchPeerSyncing {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
     var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)?
+    var pendingTransfersHandler: (@MainActor @Sendable (WatchPendingTransfersSummary) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
     var hasContentPending = false
+    var pendingTransfers: WatchPendingTransfersSummary?
 
     var shouldFailAcknowledgements = false
     var waitForActivationError: (any Error)?
@@ -766,8 +802,16 @@ private final class ReceiverPeerStub: WatchPeerSyncing {
         inventoryRequest
     }
 
+    func currentPendingTransfers() -> WatchPendingTransfersSummary? {
+        pendingTransfers
+    }
+
     func emitActivation() {
         activationHandler?()
+    }
+
+    func emitPendingTransfers(_ summary: WatchPendingTransfersSummary) {
+        pendingTransfersHandler?(summary)
     }
 
     func emitCommand(_ command: StagedWatchLibraryCommand) {

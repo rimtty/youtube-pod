@@ -39,6 +39,9 @@
 - 正規化前に保存された項目は起動時／前面復帰時に新しい順で1件ずつバックフィルし、ダウンロード中・再生中の項目はスキップ。失敗した項目はセッション内で再試行しない
 - Watch転送は正規化済みファイルのAPFSクローンとdigestサイドカー書き込みだけで`.queued`へ進み、未正規化項目はその場で正規化してから転送。準備中のキャンセルが最適化完了後に上書きされないこと、前面復帰の`statusChanged`で進行中の準備が再同期要求へ落ちないことを確認
 - 正規化されていないファイルから作ったスナップショットは`normalizedFlatM4A`プロファイルを付けず、WatchのAVFoundation検証へフォールバックする
+- Watch転送中の残り時間: WCSessionの進捗コールバックを60秒の移動窓で計測し、10秒分のサンプルが揃ってから「残り約N分」を表示。5秒ごとにカウントダウンし、30秒進捗がなければ「一時停止中」。同時投入した転送は先頭だけが進捗を持ち、後続は「Watchへ転送待ち（N番目）」と表示する
+- iPhone→Watchの保留転送要約（`WatchPendingTransfersSummary`）をinventory requestと同じapplication context辞書に載せて送る（`updateApplicationContext`は辞書全体を置き換えるため分割送信しない）。要約は状態遷移時のみ変わり、進捗では再送しない。Watch側は両キーを独立にデコードし、activation・前面復帰・同期パスごとに読み直す
+- Watchルート画面に「iPhoneからN件受信中（合計サイズ）」バナーと「Watchを開いたままにしてください」「設定 > 一般 > 時計に戻る で YouTube Pod を1時間に」の案内を表示。iPhoneのライブラリヘッダとWatch接続カードにも同趣旨のヒントを表示。`isFrontmostTimeoutExtended`はwatchOS 7で廃止（SDKヘッダに"No longer supported"）のため、アプリ側から前面時間は延長できない
 - 最小対象watchOS 26.0。watchOS 27 / Apple Watch Series 9（41mm／45mm）SimulatorでWatchアプリのビルドと回帰テストに成功
 - Watch側Unit回帰テスト: 129件、失敗0件（転送protocol、受信、SwiftData、ACK outbox、削除、ローカルプレイヤーを含む）。この件数にXCUITestは含まない
 - Watch転送envelope／ACK／inventory／削除commandのencode/decode、schema不一致、破損payload、不正値、再生位置clampを確認

@@ -458,7 +458,7 @@ private extension UUID {
     static let `nil` = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }
 
-private func validateYouTubeID(_ youtubeID: String) throws {
+func validateYouTubeID(_ youtubeID: String) throws {
     let scalars = youtubeID.unicodeScalars
     let allowed = CharacterSet(
         charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"

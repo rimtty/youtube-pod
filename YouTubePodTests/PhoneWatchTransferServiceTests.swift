@@ -134,6 +134,62 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertTrue(fixture.transport.sent.isEmpty)
     }
 
+    func testEnqueuePublishesPendingTransfersSummaryOnceAndNotOnProgress() async throws {
+        let fixture = try makeFixture()
+        let source = try makeSource(id: "summary0001", artwork: false)
+
+        try await fixture.service.enqueue(source)
+        await Task.yield()
+
+        let record = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        let summary = try XCTUnwrap(fixture.transport.pendingSummaries.last)
+        XCTAssertEqual(summary.transferringCount, 1)
+        XCTAssertEqual(summary.queuedCount, 0)
+        XCTAssertEqual(summary.totalBytes, record.sourceFileSize)
+        XCTAssertEqual(summary.activeYouTubeID, source.youtubeID)
+        XCTAssertEqual(summary.activeTitle, source.title)
+        let publishCount = fixture.transport.publishedContexts.count
+
+        let key = WatchTransferKey(transferID: record.transferID, fileKind: .audio)
+        fixture.transport.emit(.progress(key, 0.2))
+        fixture.transport.emit(.progress(key, 0.5))
+        await Task.yield()
+        XCTAssertEqual(fixture.transport.publishedContexts.count, publishCount)
+
+        fixture.transport.emit(.fileFinished(key, nil))
+        fixture.transport.emit(.acknowledgement(WatchTransferAcknowledgement(
+            transferID: record.transferID,
+            revision: record.revision,
+            youtubeID: source.youtubeID,
+            outcome: .imported
+        )))
+        await Task.yield()
+        let cleared = try XCTUnwrap(fixture.transport.pendingSummaries.last)
+        XCTAssertEqual(cleared.pendingCount, 0)
+        XCTAssertEqual(cleared.totalBytes, 0)
+        XCTAssertNil(cleared.activeYouTubeID)
+        XCTAssertNil(cleared.activeTitle)
+    }
+
+    func testSummaryChangeRepublishesWithSameInventoryRequestAndCancelClearsIt() async throws {
+        let fixture = try makeFixture(start: false)
+        fixture.service.start()
+        fixture.service.refreshState()
+        let request = try XCTUnwrap(fixture.transport.inventoryRequests.last)
+        let source = try makeSource(id: "summary0002", artwork: false)
+
+        try await fixture.service.enqueue(source)
+        await Task.yield()
+
+        let published = try XCTUnwrap(fixture.transport.publishedContexts.last)
+        XCTAssertEqual(published.inventoryRequest, request)
+        XCTAssertEqual(published.pendingTransfers.transferringCount, 1)
+
+        fixture.service.cancel(videoID: source.youtubeID)
+        await Task.yield()
+        XCTAssertEqual(fixture.transport.pendingSummaries.last?.pendingCount, 0)
+    }
+
     func testWatchAcknowledgementIsRequiredBeforeTransferBecomesAvailable() async throws {
         let fixture = try makeFixture()
         let source = try makeSource(id: "transfer002", artwork: false)
@@ -1622,7 +1678,9 @@ private final class WatchTransportStub: WatchConnectivityTransport {
     private(set) var sent: [(url: URL, envelope: WatchTransferEnvelope)] = []
     private(set) var cancelledTransferIDs: [UUID] = []
     private(set) var deletionCommands: [WatchLibraryCommand] = []
-    private(set) var inventoryRequests: [WatchInventoryRequest] = []
+    private(set) var publishedContexts: [WatchPhoneApplicationContext] = []
+    var inventoryRequests: [WatchInventoryRequest] { publishedContexts.compactMap(\.inventoryRequest) }
+    var pendingSummaries: [WatchPendingTransfersSummary] { publishedContexts.map(\.pendingTransfers) }
     var onInventoryRequest: ((WatchInventoryRequest) -> Void)?
     var inventoryRequestError: (any Error)?
     var deletionError: WatchTransportStubError?
@@ -1658,10 +1716,12 @@ private final class WatchTransportStub: WatchConnectivityTransport {
         deletionCommands.append(command)
     }
 
-    func requestInventory(_ request: WatchInventoryRequest) throws {
+    func publishApplicationContext(_ context: WatchPhoneApplicationContext) throws {
         if let inventoryRequestError { throw inventoryRequestError }
-        onInventoryRequest?(request)
-        inventoryRequests.append(request)
+        if let request = context.inventoryRequest {
+            onInventoryRequest?(request)
+        }
+        publishedContexts.append(context)
     }
 
     func cancelFiles(transferID: UUID) {

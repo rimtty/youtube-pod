@@ -139,8 +139,10 @@ private final class WatchSimulatorSyncPeer: WatchPeerSyncing {
     var stagedFileHandler: (@MainActor @Sendable (StagedWatchTransferFile) -> Void)?
     var commandHandler: (@MainActor @Sendable (StagedWatchLibraryCommand) -> Void)?
     var inventoryRequestHandler: (@MainActor @Sendable (WatchInventoryRequest) -> Void)?
+    var pendingTransfersHandler: (@MainActor @Sendable (WatchPendingTransfersSummary) -> Void)?
     var activationHandler: (@MainActor @Sendable () -> Void)?
     private(set) var hasContentPending = true
+    private var pendingTransfers: WatchPendingTransfersSummary?
 
     init(
         stager: WatchIncomingFileStager,
@@ -156,6 +158,18 @@ private final class WatchSimulatorSyncPeer: WatchPeerSyncing {
         guard deliveryTask == nil else { return }
         activationHandler?()
         inventoryRequestHandler?(inventoryRequest)
+        // Announce the simulated delivery first so the banner transition can
+        // be observed, then clear it once the file is staged.
+        let announced = WatchPendingTransfersSummary(
+            queuedCount: 0,
+            transferringCount: 1,
+            totalBytes: Int64(envelope.fileSize),
+            activeYouTubeID: envelope.youtubeID,
+            activeTitle: envelope.title,
+            publishedAt: .now
+        )
+        pendingTransfers = announced
+        pendingTransfersHandler?(announced)
         deliveryTask = Task { @MainActor [weak self] in
             do {
                 // Leave the empty library visible briefly so a developer can
@@ -171,6 +185,9 @@ private final class WatchSimulatorSyncPeer: WatchPeerSyncing {
                 )
                 hasContentPending = false
                 stagedFileHandler?(staged)
+                let cleared = WatchPendingTransfersSummary.none(at: .now)
+                pendingTransfers = cleared
+                pendingTransfersHandler?(cleared)
             } catch is CancellationError {
                 return
             } catch {
@@ -199,6 +216,7 @@ private final class WatchSimulatorSyncPeer: WatchPeerSyncing {
         )
     }
     func currentInventoryRequest() -> WatchInventoryRequest? { inventoryRequest }
+    func currentPendingTransfers() -> WatchPendingTransfersSummary? { pendingTransfers }
 }
 
 private enum WatchSimulatorSyncFixtureError: Error {
