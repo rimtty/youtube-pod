@@ -12,6 +12,27 @@ def _write_json(path, value):
     os.replace(temporary, path)
 
 
+def _shared_cache_directory():
+    """yt-dlp cache shared by every download.
+
+    The app exports XDG_CACHE_HOME (its Caches directory) before Python
+    starts, so this resolves to the same $XDG_CACHE_HOME/yt-dlp that yt-dlp
+    would pick by default; the fallback mirrors yt-dlp's own. It must not live
+    under the per-download work directory in tmp: that directory is removed
+    after each run and PythonAudioExtractor.removeStaleWorkingDirectories()
+    sweeps tmp/YouTubePod-* at startup, so a cache there never survives.
+
+    What persists is yt-dlp's youtube-sigfuncs data, so a second download on
+    the same player skips the signature challenge; n challenges are still
+    solved per video. If iOS purges Caches, yt-dlp recreates the directory on
+    the next store and treats missing entries as a cold cache. yt-dlp's
+    Cache.remove() refuses paths without "cache"/"tmp" in lowercase, which
+    does not matter here because the app never clears the cache through it.
+    """
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(root, "yt-dlp")
+
+
 def download_audio(url, output_directory, cancellation_path, progress_path):
     """Download a public YouTube video's M4A-only stream and return JSON."""
     try:
@@ -55,7 +76,7 @@ def download_audio(url, output_directory, cancellation_path, progress_path):
             "quiet": True,
             "no_warnings": False,
             "progress_hooks": [progress_hook],
-            "cachedir": str(output_root / ".cache"),
+            "cachedir": _shared_cache_directory(),
             "socket_timeout": 30,
             "retries": 3,
         }
