@@ -25,6 +25,55 @@ final class DownloadManagerTests: XCTestCase {
         XCTAssertEqual(maximumConcurrentExtractions, 1)
     }
 
+    func testDownloadOptimizesSavedAudioBeforeCompletingAndIgnoresCancellation() async throws {
+        let extractor = ImmediateExtractor()
+        let library = LibraryStub()
+        let optimizer = BlockingOptimizerStub()
+        let manager = DownloadManager(extractor: extractor, library: library, optimizer: optimizer)
+        let first = video(id: "optimize001")
+        let second = video(id: "optimize002")
+
+        manager.enqueue(first)
+        manager.enqueue(second)
+        try await waitUntil { optimizer.activeVideoID == first.id }
+        XCTAssertEqual(manager.phases[first.id], .optimizing(0))
+        // The serial slot is held while optimizing so the next yt-dlp run
+        // does not compete with the remux for disk bandwidth.
+        XCTAssertEqual(manager.phases[second.id], .queued)
+        XCTAssertTrue(manager.isExtracting, "a queued download still counts as pending extraction")
+
+        optimizer.report(videoID: first.id, progress: .remuxing(0.5))
+        try await waitUntil { manager.phases[first.id] == .optimizing(0.45) }
+
+        // The audio is already saved; neither a per-item cancel nor the
+        // background-transition cancelAll may discard it.
+        await manager.cancel(videoID: first.id)
+        await manager.cancelAll()
+        XCTAssertEqual(manager.phases[first.id], .optimizing(0.45))
+        XCTAssertTrue(library.deletedVideoIDs.isEmpty)
+        XCTAssertFalse(manager.isExtracting, "optimizing an already saved item is not an extraction")
+
+        optimizer.complete(videoID: first.id)
+        try await waitUntil { manager.phases[first.id] == .completed }
+        XCTAssertEqual(manager.phases[second.id], .failed("バックグラウンド移行のためキャンセルしました"))
+        XCTAssertEqual(optimizer.optimizedVideoIDs, [first.id])
+    }
+
+    func testOptimizerFailureStillCompletesTheDownload() async throws {
+        let extractor = ImmediateExtractor()
+        let library = LibraryStub()
+        let optimizer = FailingOptimizerStub()
+        let manager = DownloadManager(extractor: extractor, library: library, optimizer: optimizer)
+        let item = video(id: "optimize003")
+
+        manager.enqueue(item)
+        try await waitUntil { manager.phases[item.id] == .completed }
+
+        XCTAssertEqual(library.importedVideoIDs, [item.id])
+        XCTAssertTrue(library.deletedVideoIDs.isEmpty)
+        XCTAssertEqual(optimizer.attempts, 1)
+    }
+
     func testCancellingQueuedItemLeavesActiveItemIndependent() async throws {
         let extractor = BlockingExtractor()
         let library = LibraryStub()
@@ -403,6 +452,7 @@ private actor AlwaysFailingExtractor: AudioExtracting {
 @MainActor
 private final class LibraryStub: AudioLibraryManaging {
     private(set) var importedVideoIDs: [String] = []
+    private(set) var deletedVideoIDs: [String] = []
 
     func importAudio(_ extracted: ExtractedAudio, metadata: VideoSummary) async throws -> SavedAudio {
         importedVideoIDs.append(metadata.id)
@@ -418,12 +468,20 @@ private final class LibraryStub: AudioLibraryManaging {
         )
     }
 
-    func delete(_ audio: SavedAudio) throws {}
+    func delete(_ audio: SavedAudio) throws { deletedVideoIDs.append(audio.youtubeID) }
     func updateStatistics(_ counts: [String: Int64]) throws {}
     func updatePlaybackPosition(videoID: String, position: TimeInterval) {}
     func markPlayed(videoID: String) {}
     func audioURL(for audio: SavedAudio) -> URL { URL(fileURLWithPath: "/tmp/\(audio.youtubeID).m4a") }
     func thumbnailURL(for audio: SavedAudio) -> URL? { nil }
+    func savedAudio(videoID: String) -> SavedAudio? { nil }
+    func audiosRequiringNormalization(currentVersion: Int) -> [SavedAudio] { [] }
+    func recordNormalizedAudio(
+        videoID: String,
+        contentSHA256: String,
+        fileSize: Int64,
+        normalizationVersion: Int
+    ) throws {}
 }
 
 @MainActor
@@ -461,6 +519,14 @@ private final class BlockingLibraryStub: AudioLibraryManaging {
     func markPlayed(videoID: String) {}
     func audioURL(for audio: SavedAudio) -> URL { URL(fileURLWithPath: "/tmp/\(audio.youtubeID).m4a") }
     func thumbnailURL(for audio: SavedAudio) -> URL? { nil }
+    func savedAudio(videoID: String) -> SavedAudio? { nil }
+    func audiosRequiringNormalization(currentVersion: Int) -> [SavedAudio] { [] }
+    func recordNormalizedAudio(
+        videoID: String,
+        contentSHA256: String,
+        fileSize: Int64,
+        normalizationVersion: Int
+    ) throws {}
 }
 
 @MainActor
@@ -490,9 +556,68 @@ private final class FailFirstImportLibraryStub: AudioLibraryManaging {
     func markPlayed(videoID: String) {}
     func audioURL(for audio: SavedAudio) -> URL { URL(fileURLWithPath: "/tmp/\(audio.youtubeID).m4a") }
     func thumbnailURL(for audio: SavedAudio) -> URL? { nil }
+    func savedAudio(videoID: String) -> SavedAudio? { nil }
+    func audiosRequiringNormalization(currentVersion: Int) -> [SavedAudio] { [] }
+    func recordNormalizedAudio(
+        videoID: String,
+        contentSHA256: String,
+        fileSize: Int64,
+        normalizationVersion: Int
+    ) throws {}
 }
 
 private enum TestImportError: LocalizedError {
     case failed
     var errorDescription: String? { "Import failed" }
+}
+
+@MainActor
+private final class BlockingOptimizerStub: LibraryAudioOptimizing {
+    private(set) var progress: [String: LibraryAudioOptimizationProgress] = [:]
+    private(set) var activeVideoID: String?
+    private(set) var optimizedVideoIDs: [String] = []
+    private var continuations: [String: CheckedContinuation<Void, Never>] = [:]
+
+    func optimize(videoID: String) async throws -> OptimizedLibraryAudio {
+        activeVideoID = videoID
+        await withCheckedContinuation { continuation in
+            continuations[videoID] = continuation
+        }
+        progress[videoID] = nil
+        activeVideoID = nil
+        optimizedVideoIDs.append(videoID)
+        return OptimizedLibraryAudio(
+            audioURL: URL(fileURLWithPath: "/tmp/\(videoID).m4a"),
+            contentSHA256: String(repeating: "0", count: 64),
+            fileSize: 1
+        )
+    }
+
+    func report(videoID: String, progress value: LibraryAudioOptimizationProgress) {
+        progress[videoID] = value
+    }
+
+    func complete(videoID: String) {
+        continuations.removeValue(forKey: videoID)?.resume()
+    }
+
+    func resumeBackfill() {}
+    func pauseBackfill() {}
+}
+
+@MainActor
+private final class FailingOptimizerStub: LibraryAudioOptimizing {
+    private(set) var progress: [String: LibraryAudioOptimizationProgress] = [:]
+    private(set) var activeVideoID: String?
+    private(set) var attempts = 0
+
+    struct Failure: Error {}
+
+    func optimize(videoID: String) async throws -> OptimizedLibraryAudio {
+        attempts += 1
+        throw Failure()
+    }
+
+    func resumeBackfill() {}
+    func pauseBackfill() {}
 }

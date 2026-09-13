@@ -46,6 +46,30 @@ protocol AudioLibraryManaging: AnyObject {
     func markPlayed(videoID: String)
     func audioURL(for audio: SavedAudio) -> URL
     func thumbnailURL(for audio: SavedAudio) -> URL?
+    func savedAudio(videoID: String) -> SavedAudio?
+    /// Library items whose audio file has not been normalized to
+    /// `currentVersion`, most recently downloaded first.
+    func audiosRequiringNormalization(currentVersion: Int) -> [SavedAudio]
+    func recordNormalizedAudio(
+        videoID: String,
+        contentSHA256: String,
+        fileSize: Int64,
+        normalizationVersion: Int
+    ) throws
+}
+
+/// Rewrites library audio into a flat, digest-bound M4A so Apple Watch
+/// transfers can start immediately. Jobs are serialized per process.
+@MainActor
+protocol LibraryAudioOptimizing: AnyObject {
+    var progress: [String: LibraryAudioOptimizationProgress] { get }
+    var activeVideoID: String? { get }
+
+    /// Returns immediately when the item is already normalized. Concurrent
+    /// calls for the same video join the in-flight job.
+    func optimize(videoID: String) async throws -> OptimizedLibraryAudio
+    func resumeBackfill()
+    func pauseBackfill()
 }
 
 @MainActor

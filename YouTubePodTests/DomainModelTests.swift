@@ -8,8 +8,44 @@ final class DomainModelTests: XCTestCase {
         XCTAssertTrue(DownloadPhase.downloading(0.5).isActive)
         XCTAssertTrue(DownloadPhase.retrying(attempt: 1, maximumRetries: 3).isActive)
         XCTAssertTrue(DownloadPhase.validating.isActive)
+        XCTAssertTrue(DownloadPhase.optimizing(0.5).isActive)
         XCTAssertFalse(DownloadPhase.completed.isActive)
         XCTAssertFalse(DownloadPhase.failed("network").isActive)
+    }
+
+    func testOptimizingPhaseNoLongerOwnsTheExtraction() {
+        XCTAssertTrue(DownloadPhase.validating.isExtracting)
+        XCTAssertTrue(DownloadPhase.queued.isExtracting)
+        XCTAssertFalse(DownloadPhase.optimizing(0).isExtracting)
+        XCTAssertFalse(DownloadPhase.completed.isExtracting)
+    }
+
+    func testOptimizationProgressMapsStagesOntoOneBar() {
+        XCTAssertEqual(LibraryAudioOptimizationProgress.inspecting.overallFraction, 0)
+        XCTAssertTrue(LibraryAudioOptimizationProgress.inspecting.isIndeterminate)
+        XCTAssertEqual(LibraryAudioOptimizationProgress.remuxing(0.5).overallFraction, 0.45, accuracy: 0.0001)
+        XCTAssertEqual(LibraryAudioOptimizationProgress.verifying.overallFraction, 0.9)
+        XCTAssertEqual(LibraryAudioOptimizationProgress.hashing(1).overallFraction, 1, accuracy: 0.0001)
+        XCTAssertFalse(LibraryAudioOptimizationProgress.hashing(0.2).isIndeterminate)
+    }
+
+    func testSavedAudioIsNormalizedOnlyWithDigestAtCurrentVersion() {
+        let audio = SavedAudio(
+            youtubeID: "normalize01",
+            title: "Audio",
+            channelTitle: "Channel",
+            publishedAt: .now,
+            savedViewCount: 1,
+            duration: 10,
+            fileSize: 1,
+            audioRelativePath: "Audio/normalize01.m4a"
+        )
+        XCTAssertFalse(audio.isNormalized(currentVersion: 1))
+        audio.audioContentSHA256 = String(repeating: "a", count: 64)
+        XCTAssertFalse(audio.isNormalized(currentVersion: 1))
+        audio.audioNormalizationVersion = 1
+        XCTAssertTrue(audio.isNormalized(currentVersion: 1))
+        XCTAssertFalse(audio.isNormalized(currentVersion: 2))
     }
 
     func testDownloadProgressAndFailuresCarryTheirValues() {

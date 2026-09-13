@@ -59,7 +59,54 @@ final class YouTubePodSchemaTests: XCTestCase {
         XCTAssertEqual(saved.thumbnailRelativePath, "Artwork/migrate0001.jpg")
         XCTAssertEqual(saved.lastPlaybackPosition, 123)
         XCTAssertTrue(saved.hasBeenPlayed)
+        // Pre-normalization rows must read as "not yet optimized".
+        XCTAssertNil(saved.audioContentSHA256)
+        XCTAssertEqual(saved.audioNormalizationVersion, 0)
+        XCTAssertFalse(saved.isNormalized(currentVersion: LibraryAudioOptimizer.currentNormalizationVersion))
         XCTAssertTrue(try migratedContainer.mainContext.fetch(FetchDescriptor<WatchTransferRecord>()).isEmpty)
+    }
+
+    @MainActor
+    func testNormalizationFieldsRoundTripThroughReopenedStore() throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("YouTubePod-SchemaNormalization-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let storeURL = storeDirectory.appendingPathComponent("library.store")
+        let digest = String(repeating: "b", count: 64)
+
+        do {
+            let container = try ModelContainer(
+                for: SavedAudio.self,
+                WatchTransferRecord.self,
+                configurations: ModelConfiguration(url: storeURL)
+            )
+            container.mainContext.insert(
+                SavedAudio(
+                    youtubeID: "digest00001",
+                    title: "Normalized audio",
+                    channelTitle: "Channel",
+                    publishedAt: .now,
+                    savedViewCount: 1,
+                    duration: 60,
+                    fileSize: 2_048,
+                    audioRelativePath: "Audio/digest00001.m4a",
+                    audioContentSHA256: digest,
+                    audioNormalizationVersion: 1
+                )
+            )
+            try container.mainContext.save()
+        }
+
+        let reopened = try ModelContainer(
+            for: SavedAudio.self,
+            WatchTransferRecord.self,
+            configurations: ModelConfiguration(url: storeURL)
+        )
+        let saved = try XCTUnwrap(reopened.mainContext.fetch(FetchDescriptor<SavedAudio>()).first)
+        XCTAssertEqual(saved.audioContentSHA256, digest)
+        XCTAssertEqual(saved.audioNormalizationVersion, 1)
+        XCTAssertTrue(saved.isNormalized(currentVersion: 1))
     }
 
     @MainActor

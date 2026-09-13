@@ -90,7 +90,8 @@ flowchart LR
 
 ### iPhone側
 
-- 元M4Aを直接キューへ渡さず、`Application Support/WatchTransfers/<transferID>/`へ転送用スナップショットを作る
+- ライブラリの`Audio/<id>.m4a`は保存直後に`LibraryAudioOptimizer`がフラットM4Aへ正規化し、SHA-256を`SavedAudio`に記録する。転送時の再多重化・ハッシュ計算は行わない
+- 元M4Aを直接キューへ渡さず、`Application Support/WatchTransfers/<transferID>/`へ転送用スナップショット（APFSクローン＋digestサイドカー）を作る。未正規化の項目だけは転送前にその場で正規化する
 - 転送中にiPhoneライブラリから元音声が削除されても転送を壊さない
 - `WCSessionFileTransfer.progress`を監視してUIへ進捗を反映する
 - キャンセル時は同じ`transferID`の未完了音声・画像転送を両方キャンセルする

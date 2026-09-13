@@ -9,6 +9,7 @@ final class AppEnvironment {
     let catalog: YouTubeDataClient
     let library: AudioLibraryService
     let downloads: DownloadManager
+    let optimizer: LibraryAudioOptimizer
     let player: AudioPlayerService
     let watchTransfers: PhoneWatchTransferService
 
@@ -27,7 +28,7 @@ final class AppEnvironment {
             credentialProvider: { await auth.validCredential() },
             authenticationFailureHandler: { await auth.invalidateSession() }
         )
-        self.player = AudioPlayerService(
+        let player = AudioPlayerService(
             persistPlaybackPosition: { videoID, position in
                 library.updatePlaybackPosition(videoID: videoID, position: position)
             },
@@ -35,16 +36,34 @@ final class AppEnvironment {
                 library.markPlayed(videoID: videoID)
             }
         )
-        self.downloads = DownloadManager(extractor: PythonAudioExtractor(), library: library)
+        self.player = player
+        // Deferral closures read `downloads`, which is created after the
+        // optimizer; a weak box breaks the initialization cycle.
+        let downloadsBox = WeakBox<DownloadManager>()
+        let optimizer = LibraryAudioOptimizer(
+            library: library,
+            shouldDeferBackfill: { downloadsBox.value?.isExtracting == true },
+            isCurrentlyPlaying: { videoID in player.currentItem?.id == videoID }
+        )
+        self.optimizer = optimizer
+        let downloads = DownloadManager(
+            extractor: PythonAudioExtractor(),
+            library: library,
+            optimizer: optimizer
+        )
+        downloadsBox.value = downloads
+        self.downloads = downloads
         self.watchTransfers = PhoneWatchTransferService(
             modelContext: modelContext,
             transport: WCSessionAdapter(),
-            snapshots: WatchTransferSnapshotStore()
+            snapshots: WatchTransferSnapshotStore(),
+            optimizer: optimizer
         )
     }
 
     func start() async {
         watchTransfers.start()
+        optimizer.resumeBackfill()
         // Do not wait for the first foreground transition callback to learn
         // the Watch's state. SwiftUI can create this environment while the
         // scene is already active, in which case no initial phase change is
@@ -53,4 +72,9 @@ final class AppEnvironment {
         await auth.restore()
         player.configureAudioSession()
     }
+}
+
+@MainActor
+private final class WeakBox<Value: AnyObject> {
+    weak var value: Value?
 }
