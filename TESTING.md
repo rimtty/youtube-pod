@@ -15,6 +15,8 @@
 - 通常公開動画、Shorts、30分超の公開動画: M4A取得、音声トラックあり、動画トラックなしを確認
 - 長尺取得の途中キャンセル、追加リトライ、起動時の残存一時フォルダ清掃を確認
 - `yt-dlp-ejs 0.8.0`を固定同梱し、実行時ダウンロードなしでWebKit JavaScriptチャレンジ処理を確認
+- `yt-dlp-ejs 0.8.0`には`globalThis.location`代入のガード（ハッシュ再計算込み）、`yt-dlp-apple-webkit-jsi 0.1.1`には隠しWKWebViewのnavigation policy delegateをローカルパッチとして適用し、`verify.sh`が`scripts/patch_python_runtime.py --check`で適用状態を、`scripts/test_webkit_jsi_patch.py`でホストWebKit上のナビゲーションcancelとyt-dlpによるスクリプト受理を検証
+- yt-dlpのキャッシュを`Library/Caches/yt-dlp`へ移し、同一playerの署名チャレンジ結果をダウンロード間で再利用（起動時の`YouTubePod-*`清掃とキャンセル後の一時ファイル検査に影響しない）
 - Release / generic iOS Simulator: ビルド成功
 - iPhone 16 Pro Max向け開発署名ビルド: ビルド・インストール・起動成功
 - Googleの復元済みセッションに`youtube.readonly`が含まれることを、APIトークン発行前にも検証
@@ -71,7 +73,7 @@
 - Release Watchアプリに`DEBUG`条件、XCTest bundle、M4A fixture、DEBUG UI fixture sentinelが混入しないことを専用ゲートで確認
 - CIでiOS／watchOS static analyzerとApple Watch Series 9（41mm／45mm）の両サイズを検証し、Watch xcresultを14日間保存
 
-`./scripts/verify.sh` はiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はwatchOS 27のApple Watch Series 9（41mm／45mm）Simulatorを一時作成し、Unit testとXCUITestを両サイズで実行して終了時にSimulatorを削除する。Watchアプリの最小対象はwatchOS 26.0とし、26.6と27系の実機を同じ成果物の対象にする。各スクリプトはビルド成果物内のPrivacy Manifestも検証する。`./scripts/verify_watch_release_isolation.sh`はRelease Watchアプリを別のDerivedDataへビルドし、DEBUG fixtureの分離を検証する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
+`./scripts/verify.sh` は同梱Pythonパッケージのパッチ検証とホストWebKit回帰テストの後にiOS通常回帰テスト（実動画4件はスキップ）、`./scripts/verify_watch.sh`はwatchOS 27のApple Watch Series 9（41mm／45mm）Simulatorを一時作成し、Unit testとXCUITestを両サイズで実行して終了時にSimulatorを削除する。Watchアプリの最小対象はwatchOS 26.0とし、26.6と27系の実機を同じ成果物の対象にする。各スクリプトはビルド成果物内のPrivacy Manifestも検証する。`./scripts/verify_watch_release_isolation.sh`はRelease Watchアプリを別のDerivedDataへビルドし、DEBUG fixtureの分離を検証する。`YOUTUBEPOD_RUN_NETWORK_INTEGRATION=1 ./scripts/verify.sh` は通常動画の実取得も実行する。Shorts・30分超・キャンセルのURL指定方法はREADMEを参照する。
 
 ## Apple Watch実機の合格条件（Simulatorでは検証不可）
 
@@ -105,6 +107,7 @@
 - [x] 30分以上の公開動画をM4Aとして保存できる
 - [x] 3ファイルすべてに音声トラックがあり、動画トラックがない
 - [x] 取得中のキャンセル後に再試行でき、一時ファイルが残らない
+- [x] YouTubeアプリをインストールした状態で、登録チャンネルのチャンネル動画一覧から「音声を保存」を5回以上連打してもYouTubeアプリへ切り替わらず、全件が保存済みになる（Xcodeコンソールに`Cancelled navigation`が出ないこと。出る場合はejs側ガードが効いていない）
 - [x] 機内モードとアプリ再起動後も一覧、サムネイル、再生位置が復元する
 - [ ] ロック画面でも再生が続き、再生・一時停止・15秒送り／戻しを操作できる
 - [ ] 削除後に音声、サムネイル、SwiftDataの項目がすべて消える

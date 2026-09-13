@@ -19,6 +19,12 @@ fi
 cd "$PROJECT_ROOT"
 python3 -c 'compile(open("PythonRuntime/download_audio.py", encoding="utf-8").read(), "PythonRuntime/download_audio.py", "exec")'
 
+if ! python3 scripts/patch_python_runtime.py --check; then
+    print -u2 "Bundled Python packages are not patched. Run ./scripts/bootstrap.sh before verification."
+    exit 1
+fi
+python3 scripts/test_webkit_jsi_patch.py
+
 "$XCODEGEN" generate
 
 if [[ ${YOUTUBEPOD_RUN_NETWORK_INTEGRATION:-0} == 1 ]]; then

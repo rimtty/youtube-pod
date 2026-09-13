@@ -31,6 +31,10 @@ else
   install_python_packages python3 -m pip install --disable-pip-version-check
 fi
 
+# Local fixes for vendored packages (see PythonRuntime/patches/README.md).
+# Must run after every install: --upgrade replaces the patched files.
+python3 "$PROJECT_ROOT/scripts/patch_python_runtime.py"
+
 if [ ! -x "$XCODEGEN_DIR/bin/xcodegen" ]; then
   curl -fL "$XCODEGEN_URL" -o "$TOOLS_DIR/xcodegen.zip"
   unzip -qo "$TOOLS_DIR/xcodegen.zip" -d "$TOOLS_DIR/xcodegen-dist"

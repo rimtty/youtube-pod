@@ -13,7 +13,7 @@ iOS 27 / SwiftUI で動作する、技術検証用のオンデバイス音声ラ
 4. `open YouTubePod.xcodeproj`
 5. Signing Team と Bundle ID を自分の環境に合わせ、iOS 27 実機で実行
 
-Python 3.14、`yt-dlp 2026.08.19`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `PythonRuntime/requirements.lock` の固定バージョンを使って `bootstrap.sh` が準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。
+Python 3.14、`yt-dlp 2026.08.19`、`yt-dlp-ejs 0.8.0`、`yt-dlp-apple-webkit-jsi 0.1.1` は `PythonRuntime/requirements.lock` の固定バージョンを使って `bootstrap.sh` が準備します。JavaScriptチャレンジ用スクリプトもアプリへ同梱し、実行時のパッケージ取得・更新は行いません。 `yt-dlp-ejs` と `yt-dlp-apple-webkit-jsi` には `scripts/patch_python_runtime.py` でローカルパッチを適用します（`bootstrap.sh` が自動実行）。内容は、隠しWKWebView内のチャレンジ解決がYouTubeアプリへのUniversal Link遷移を起こす不具合の回避で、上流の [yt-dlp/ejs#76](https://github.com/yt-dlp/ejs/issues/76) と [grqz/yt-dlp-apple-webkit-jsi#5](https://github.com/grqz/yt-dlp-apple-webkit-jsi/issues/5) が解決されるまでの暫定対応です。詳細は `PythonRuntime/patches/README.md` を参照してください。yt-dlpのキャッシュはアプリの `Library/Caches/yt-dlp` に置き、ダウンロード間で共有します。
 
 同梱CPythonのSimulator拡張はarm64向けです。Xcode 27をApple Silicon Macで使用してください。
 
