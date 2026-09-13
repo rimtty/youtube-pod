@@ -41,6 +41,7 @@ struct LibraryView: View {
                                         isSelectionMode: editMode.isEditing,
                                         watchTransferRecord: watchTransferRecord(for: audio.youtubeID),
                                         watchTransferProgress: environment.watchTransfers.liveProgress[audio.youtubeID],
+                                        watchTransferEstimate: environment.watchTransfers.liveEstimates[audio.youtubeID],
                                         optimizationProgress: environment.optimizer.progress[audio.youtubeID],
                                         watchCanTransfer: environment.watchTransfers.connectionStatus.canTransfer,
                                         onPlay: { play(audio) },
@@ -327,6 +328,7 @@ private struct LibraryAudioRow: View {
     let isSelectionMode: Bool
     let watchTransferRecord: WatchTransferRecord?
     let watchTransferProgress: Double?
+    let watchTransferEstimate: WatchTransferEstimate?
     let optimizationProgress: LibraryAudioOptimizationProgress?
     let watchCanTransfer: Bool
     let onPlay: () -> Void
@@ -354,6 +356,7 @@ private struct LibraryAudioRow: View {
                 isPlaying: isPlaying,
                 watchTransferRecord: watchTransferRecord,
                 watchTransferProgress: watchTransferProgress,
+                watchTransferEstimate: watchTransferEstimate,
                 optimizationProgress: optimizationProgress,
                 watchCanTransfer: watchCanTransfer,
                 onWatchAction: onWatchAction
@@ -431,6 +434,7 @@ private struct LibraryPlaybackFooter: View {
     let isPlaying: Bool
     let watchTransferRecord: WatchTransferRecord?
     let watchTransferProgress: Double?
+    let watchTransferEstimate: WatchTransferEstimate?
     let optimizationProgress: LibraryAudioOptimizationProgress?
     let watchCanTransfer: Bool
     let onWatchAction: (WatchTransferAction) -> Void
@@ -525,6 +529,12 @@ private struct LibraryPlaybackFooter: View {
             HStack(spacing: 6) {
                 Label(statusText, systemImage: "applewatch.and.arrow.forward")
                     .lineLimit(1)
+                if state == .transferring,
+                   let estimateText = WatchTransferEstimatePresentation.text(for: watchTransferEstimate) {
+                    Text(estimateText)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 8)
                 if let preparation {
                     if let fraction = preparation.fraction {

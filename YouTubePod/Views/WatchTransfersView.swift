@@ -51,6 +51,7 @@ struct WatchTransfersView: View {
                                     thumbnailURL: thumbnailURL(for: record.youtubeID),
                                     canRecreateTransfer: savedAudio(for: record.youtubeID) != nil,
                                     liveProgress: environment.watchTransfers.liveProgress[record.youtubeID],
+                                    liveEstimate: environment.watchTransfers.liveEstimates[record.youtubeID],
                                     optimizationProgress: environment.optimizer.progress[record.youtubeID],
                                     onRetry: { retry(record) },
                                     onCancel: { environment.watchTransfers.cancel(videoID: record.youtubeID) },
@@ -409,6 +410,7 @@ private struct WatchTransferRow: View {
     let thumbnailURL: URL?
     let canRecreateTransfer: Bool
     let liveProgress: Double?
+    let liveEstimate: WatchTransferEstimate?
     let optimizationProgress: LibraryAudioOptimizationProgress?
     let onRetry: () -> Void
     let onCancel: () -> Void
@@ -433,9 +435,17 @@ private struct WatchTransferRow: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Label(stateLabelText, systemImage: record.state.symbolName)
-                        .font(.caption.bold())
-                        .foregroundStyle(record.state.tint)
+                    HStack(spacing: 6) {
+                        Label(stateLabelText, systemImage: record.state.symbolName)
+                            .foregroundStyle(record.state.tint)
+                        if record.state == .transferring,
+                           let estimateText = WatchTransferEstimatePresentation.text(for: liveEstimate) {
+                            Text(estimateText)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.caption.bold())
                 }
                 Spacer(minLength: 0)
             }

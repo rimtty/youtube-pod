@@ -374,6 +374,52 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(fetchRecords(fixture.context).first?.lastKnownProgress, 0.25)
     }
 
+    func testRemainingTimeEstimateFollowsMeasuredThroughputAndClearsOnCompletion() async throws {
+        let clock = TestClock()
+        let fixture = try makeFixture(clock: clock)
+        let source = try makeSource(id: "estimate001", artwork: false)
+        try await fixture.service.enqueue(source)
+        let transferID = try XCTUnwrap(fixture.transport.sent.first?.envelope.transferID)
+        let key = WatchTransferKey(transferID: transferID, fileKind: .audio)
+        let fileSize = Double(try XCTUnwrap(record(source.youtubeID, in: fixture.context)).sourceFileSize)
+        XCTAssertGreaterThan(fileSize, 0)
+
+        fixture.transport.emit(.progress(key, 0.1))
+        XCTAssertNil(fixture.service.liveEstimates[source.youtubeID])
+
+        clock.advance(by: 20)
+        fixture.transport.emit(.progress(key, 0.2))
+        let estimate = try XCTUnwrap(fixture.service.liveEstimates[source.youtubeID])
+        XCTAssertEqual(estimate.bytesPerSecond, 0.1 * fileSize / 20, accuracy: 0.001)
+        XCTAssertEqual(estimate.remainingSeconds ?? -1, 160, accuracy: 0.01)
+
+        // A repeated callback with the same fraction must not reset the rate.
+        fixture.transport.emit(.progress(key, 0.2))
+        XCTAssertEqual(fixture.service.liveEstimates[source.youtubeID], estimate)
+
+        fixture.transport.emit(.fileFinished(key, nil))
+        XCTAssertNil(fixture.service.liveEstimates[source.youtubeID])
+        XCTAssertEqual(fixture.service.liveProgress[source.youtubeID], 1)
+    }
+
+    func testCancellationClearsRemainingTimeEstimate() async throws {
+        let clock = TestClock()
+        let fixture = try makeFixture(clock: clock)
+        let source = try makeSource(id: "estimate002", artwork: false)
+        try await fixture.service.enqueue(source)
+        let transferID = try XCTUnwrap(fixture.transport.sent.first?.envelope.transferID)
+        let key = WatchTransferKey(transferID: transferID, fileKind: .audio)
+        fixture.transport.emit(.progress(key, 0.1))
+        clock.advance(by: 15)
+        fixture.transport.emit(.progress(key, 0.3))
+        XCTAssertNotNil(fixture.service.liveEstimates[source.youtubeID])
+
+        fixture.service.cancel(videoID: source.youtubeID)
+
+        XCTAssertNil(fixture.service.liveEstimates[source.youtubeID])
+        XCTAssertNil(fixture.service.liveProgress[source.youtubeID])
+    }
+
     func testAudioCompletionSetsPrimaryProgressToOneWhileArtworkIsPending() async throws {
         let fixture = try makeFixture()
         let source = try makeSource(id: "audioprim01", artwork: true)
@@ -1338,6 +1384,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         start: Bool = true,
         snapshotAudioContentSHA256: String? = nil,
         optimizerMode: WatchOptimizerStub.Mode = .immediate,
+        clock: TestClock = TestClock(),
         inventoryCursorStore: WatchInventoryCursorStoreStub = WatchInventoryCursorStoreStub(),
         inventoryRequestStore: WatchInventoryRequestStoreStub = WatchInventoryRequestStoreStub(),
         makeInventoryRequest: @escaping @MainActor () -> WatchInventoryRequest = {
@@ -1367,7 +1414,8 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             inventoryRequestStore: inventoryRequestStore,
             makeInventoryRequest: makeInventoryRequest,
             automaticRetryDelays: automaticRetryDelays,
-            confirmationTimeout: confirmationTimeout
+            confirmationTimeout: confirmationTimeout,
+            now: { clock.now }
         )
         if start { service.start() }
         return Fixture(
@@ -1483,6 +1531,15 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             }
             try await Task.sleep(for: .milliseconds(20))
         }
+    }
+}
+
+@MainActor
+final class TestClock {
+    private(set) var now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    func advance(by seconds: TimeInterval) {
+        now = now.addingTimeInterval(seconds)
     }
 }
 

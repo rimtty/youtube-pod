@@ -15,6 +15,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private let makeInventoryRequest: @MainActor () -> WatchInventoryRequest
     private let automaticRetryDelays: [Duration]
     private let confirmationTimeout: TimeInterval
+    private let now: @MainActor () -> Date
     private var isDrainingQueuedTransfers = false
     private var lastProgressSaveAt: [UUID: Date] = [:]
     private var automaticRetryTasks: [String: Task<Void, Never>] = [:]
@@ -29,6 +30,11 @@ final class PhoneWatchTransferService: WatchTransferManaging {
 
     private(set) var connectionStatus: WatchConnectionStatus
     private(set) var liveProgress: [String: Double] = [:]
+    /// Remaining-time estimates keyed by youtubeID, present only while an
+    /// audio file transfer is measurably progressing.
+    private(set) var liveEstimates: [String: WatchTransferEstimate] = [:]
+    private var rateEstimators: [String: WatchTransferRateEstimator] = [:]
+    private var estimateRefreshTask: Task<Void, Never>?
     private(set) var lastPersistenceError: String?
     private(set) var latestInventory: WatchInventorySnapshot?
 
@@ -43,7 +49,8 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             WatchInventoryRequest(requestID: UUID(), requestedAt: .now)
         },
         automaticRetryDelays: [Duration] = [.seconds(2), .seconds(10)],
-        confirmationTimeout: TimeInterval = 30 * 60
+        confirmationTimeout: TimeInterval = 30 * 60,
+        now: @escaping @MainActor () -> Date = { .now }
     ) {
         self.modelContainer = modelContext.container
         self.modelContext = modelContext
@@ -55,6 +62,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         self.makeInventoryRequest = makeInventoryRequest
         self.automaticRetryDelays = automaticRetryDelays
         self.confirmationTimeout = confirmationTimeout
+        self.now = now
         connectionStatus = transport.status
         pendingInventoryRequest = inventoryRequestStore.load()
     }
@@ -262,7 +270,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         record.updatedAt = .now
         transport.cancelFiles(transferID: record.transferID)
         markFailed(record, code: hadSnapshot ? "cancelled" : "snapshot", message: "転送をキャンセルしました。")
-        liveProgress[videoID] = nil
+        clearLiveProgress(for: videoID)
         if persistChanges() {
             sessionStartedTransferIDs.remove(record.transferID)
             scheduleQueuedTransfersIfNeeded()
@@ -340,7 +348,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         let transferID = record.transferID
         cancelScheduledTasks(videoID: videoID)
         transport.cancelFiles(transferID: transferID)
-        liveProgress[videoID] = nil
+        clearLiveProgress(for: videoID)
         lastProgressSaveAt[transferID] = nil
         sessionStartedTransferIDs.remove(transferID)
         modelContext.delete(record)
@@ -419,11 +427,14 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                   !record.senderFailed,
                   record.state != .removedFromWatch else { return }
             let normalized = normalizedProgress(progress)
-            liveProgress[record.youtubeID] = max(
-                liveProgress[record.youtubeID] ?? record.lastKnownProgress,
-                normalized
-            )
-            let now = Date.now
+            let previous = liveProgress[record.youtubeID] ?? record.lastKnownProgress
+            liveProgress[record.youtubeID] = max(previous, normalized)
+            let now = now()
+            if normalized > previous, normalized < 1, record.state == .transferring {
+                rateEstimators[record.youtubeID, default: WatchTransferRateEstimator()]
+                    .record(fraction: normalized, at: now)
+                refreshEstimate(for: record, at: now)
+            }
             let crossedTenPercentBoundary = Int(normalized * 10) > Int(record.lastKnownProgress * 10)
             let fiveSecondsElapsed = now.timeIntervalSince(lastProgressSaveAt[key.transferID] ?? .distantPast) >= 5
             if crossedTenPercentBoundary || fiveSecondsElapsed || normalized >= 1 {
@@ -454,7 +465,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 record.senderFailed = true
                 markFailed(record, code: failure.code, message: failure.message)
                 reduceState(of: record)
-                liveProgress[record.youtubeID] = nil
+                clearLiveProgress(for: record.youtubeID)
                 lastProgressSaveAt[key.transferID] = nil
                 if persistChanges() {
                     sessionStartedTransferIDs.remove(key.transferID)
@@ -471,7 +482,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             case .audio:
                 record.audioDeliveryFinished = true
                 record.lastKnownProgress = 1
-                liveProgress[record.youtubeID] = 1
+                finishLiveProgress(for: record.youtubeID)
             case .artwork: record.artworkDeliveryFinished = true
             }
             WatchSyncLog.phoneService.notice(
@@ -529,7 +540,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 code: "watch-import",
                 message: acknowledgement.message ?? "Apple Watchで音声を取り込めませんでした。"
             )
-            liveProgress[record.youtubeID] = nil
+            clearLiveProgress(for: record.youtubeID)
             lastProgressSaveAt[record.transferID] = nil
             if persistChanges() {
                 sessionStartedTransferIDs.remove(record.transferID)
@@ -541,7 +552,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             record.confirmedAt = .now
             record.watchImportConfirmed = false
             record.watchImportFailed = false
-            liveProgress[record.youtubeID] = nil
+            clearLiveProgress(for: record.youtubeID)
             if persistChanges() {
                 sessionStartedTransferIDs.remove(record.transferID)
                 Task { await snapshots.removeTransfer(acknowledgement.transferID) }
@@ -609,7 +620,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 record.lastErrorMessage = nil
                 record.state = .availableOnWatch
                 sessionStartedTransferIDs.remove(record.transferID)
-                liveProgress[record.youtubeID] = nil
+                clearLiveProgress(for: record.youtubeID)
                 record.updatedAt = .now
             } else {
                 switch record.state {
@@ -622,7 +633,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                     record.confirmedAt = inventory.generatedAt
                     record.lastErrorCode = nil
                     record.lastErrorMessage = nil
-                    liveProgress[record.youtubeID] = nil
+                    clearLiveProgress(for: record.youtubeID)
                 case .availableOnWatch:
                     // A missing entry alone is not proof of deletion: an
                     // incomplete/corrupt Watch library can omit a file. Keep
@@ -845,7 +856,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 }
             case .transferring where files.isEmpty && !sessionStartedTransferIDs.contains(record.transferID):
                 record.state = .reconciliationRequired
-                liveProgress[record.youtubeID] = nil
+                clearLiveProgress(for: record.youtubeID)
             case .transferring:
                 updateReconciledAudioProgress(for: record, files: files)
             case .preparing where !preparingTransferIDs.contains(record.transferID):
@@ -936,7 +947,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         if record.state == .removedFromWatch { return }
         if record.watchImportFailed {
             record.state = .failed
-            liveProgress[record.youtubeID] = nil
+            clearLiveProgress(for: record.youtubeID)
             return
         }
         if record.senderFailed {
@@ -947,7 +958,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             } else {
                 record.state = .failed
             }
-            liveProgress[record.youtubeID] = nil
+            clearLiveProgress(for: record.youtubeID)
             return
         }
         let senderFinished = record.audioDeliveryFinished && record.artworkDeliveryFinished
@@ -958,10 +969,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         record.lastKnownProgress = 1
         if record.watchImportConfirmed {
             record.state = .availableOnWatch
-            liveProgress[record.youtubeID] = nil
+            clearLiveProgress(for: record.youtubeID)
         } else {
             record.state = .awaitingWatchConfirmation
-            liveProgress[record.youtubeID] = 1
+            finishLiveProgress(for: record.youtubeID)
         }
     }
 
@@ -1076,6 +1087,52 @@ final class PhoneWatchTransferService: WatchTransferManaging {
 
     private func record(videoID: String) -> WatchTransferRecord? {
         fetchRecords().first { $0.youtubeID == videoID }
+    }
+
+    private func clearLiveProgress(for videoID: String) {
+        liveProgress[videoID] = nil
+        liveEstimates[videoID] = nil
+        rateEstimators[videoID] = nil
+    }
+
+    private func finishLiveProgress(for videoID: String) {
+        liveProgress[videoID] = 1
+        liveEstimates[videoID] = nil
+        rateEstimators[videoID] = nil
+    }
+
+    private func refreshEstimate(for record: WatchTransferRecord, at now: Date) {
+        guard record.state == .transferring,
+              let estimator = rateEstimators[record.youtubeID] else {
+            liveEstimates[record.youtubeID] = nil
+            return
+        }
+        liveEstimates[record.youtubeID] = estimator.estimate(fileSize: record.sourceFileSize, at: now)
+        scheduleEstimateRefreshIfNeeded()
+    }
+
+    /// Bluetooth delivery pauses for seconds at a time. Re-evaluate the
+    /// estimates on a slow cadence so a countdown keeps moving between
+    /// progress callbacks and a stall is surfaced without a new callback.
+    private func scheduleEstimateRefreshIfNeeded() {
+        guard estimateRefreshTask == nil, !rateEstimators.isEmpty else { return }
+        estimateRefreshTask = Task { @MainActor [weak self] in
+            defer { self?.estimateRefreshTask = nil }
+            while let self, !self.rateEstimators.isEmpty, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                let now = self.now()
+                for videoID in Array(self.rateEstimators.keys) {
+                    guard let record = self.record(videoID: videoID), record.state == .transferring else {
+                        self.liveEstimates[videoID] = nil
+                        self.rateEstimators[videoID] = nil
+                        continue
+                    }
+                    self.liveEstimates[videoID] = self.rateEstimators[videoID]?
+                        .estimate(fileSize: record.sourceFileSize, at: now)
+                }
+            }
+        }
     }
 
     private func isStillPreparing(_ record: WatchTransferRecord, transferID: UUID) -> Bool {

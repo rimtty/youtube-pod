@@ -88,6 +88,7 @@ protocol AudioPlaying: AnyObject {
 protocol WatchTransferManaging: AnyObject {
     var connectionStatus: WatchConnectionStatus { get }
     var liveProgress: [String: Double] { get }
+    var liveEstimates: [String: WatchTransferEstimate] { get }
     var latestInventory: WatchInventorySnapshot? { get }
 
     func start()

@@ -67,3 +67,17 @@ struct WatchTransferPreparationProgress: Equatable {
     var statusText: String { "Watch用に音声を最適化中" }
     var fraction: Double? { stage.isIndeterminate ? nil : stage.overallFraction }
 }
+
+enum WatchTransferEstimatePresentation {
+    /// Short label placed next to the transfer state, e.g. 「残り約3分」.
+    static func text(for estimate: WatchTransferEstimate?) -> String? {
+        guard let estimate else { return nil }
+        guard let remaining = estimate.remainingSeconds else { return "一時停止中" }
+        if remaining < 60 { return "残り1分未満" }
+        let minutes = Int((remaining / 60).rounded(.up))
+        if minutes < 60 { return "残り約\(minutes)分" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? "残り約\(hours)時間" : "残り約\(hours)時間\(rest)分"
+    }
+}
