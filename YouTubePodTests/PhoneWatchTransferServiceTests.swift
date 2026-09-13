@@ -58,6 +58,18 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertTrue(record.artworkExpected)
     }
 
+    func testEnqueueAdvertisesDigestBoundFastAudioValidation() async throws {
+        let digest = String(repeating: "a", count: 64)
+        let fixture = try makeFixture(snapshotAudioContentSHA256: digest)
+        let source = try makeSource(id: "digest00001", artwork: false)
+
+        try await fixture.service.enqueue(source)
+
+        let envelope = try XCTUnwrap(fixture.transport.sent.first?.envelope)
+        XCTAssertEqual(envelope.contentSHA256, digest)
+        XCTAssertEqual(envelope.audioValidationProfile, .normalizedFlatM4A)
+    }
+
     func testWatchAcknowledgementIsRequiredBeforeTransferBecomesAvailable() async throws {
         let fixture = try makeFixture()
         let source = try makeSource(id: "transfer002", artwork: false)
@@ -818,6 +830,33 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(requestStore.saveCount, 1)
     }
 
+    func testForegroundResumeSupersedesPublishedRequestAndForcesFreshCorrelation() throws {
+        let first = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let resumed = WatchInventoryRequest(
+            requestID: UUID(),
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        var requests = [first, resumed]
+        let requestStore = WatchInventoryRequestStoreStub()
+        let fixture = try makeFixture(
+            start: false,
+            inventoryRequestStore: requestStore,
+            makeInventoryRequest: { requests.removeFirst() }
+        )
+        fixture.service.start()
+        fixture.service.refreshState()
+
+        fixture.service.resumeFromForeground()
+
+        XCTAssertEqual(fixture.transport.inventoryRequests, [first, resumed])
+        XCTAssertEqual(requestStore.request, resumed)
+        XCTAssertEqual(requestStore.saveCount, 2)
+        XCTAssertEqual(fixture.transport.activationCount, 3)
+    }
+
     func testPendingRequestSurvivesServiceRecreationWithSameIdentity() throws {
         let request = WatchInventoryRequest(
             requestID: UUID(),
@@ -1232,6 +1271,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         cloneDelay: Duration? = nil,
         confirmationTimeout: TimeInterval = 30 * 60,
         start: Bool = true,
+        snapshotAudioContentSHA256: String? = nil,
         inventoryCursorStore: WatchInventoryCursorStoreStub = WatchInventoryCursorStoreStub(),
         inventoryRequestStore: WatchInventoryRequestStoreStub = WatchInventoryRequestStoreStub(),
         makeInventoryRequest: @escaping @MainActor () -> WatchInventoryRequest = {
@@ -1244,7 +1284,10 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
         let transport = WatchTransportStub(status: status)
-        let snapshots = WatchSnapshotStoreStub(cloneDelay: cloneDelay)
+        let snapshots = WatchSnapshotStoreStub(
+            cloneDelay: cloneDelay,
+            audioContentSHA256: snapshotAudioContentSHA256
+        )
         let service = PhoneWatchTransferService(
             modelContext: container.mainContext,
             transport: transport,
@@ -1495,16 +1538,22 @@ private actor WatchSnapshotStoreStub: WatchTransferSnapshotStoring {
     private var prepared: [UUID: PreparedWatchTransfer] = [:]
     private var cloneSourceIDs: Set<UUID> = []
     private let cloneDelay: Duration?
+    private let audioContentSHA256: String?
 
-    init(cloneDelay: Duration? = nil) {
+    init(
+        cloneDelay: Duration? = nil,
+        audioContentSHA256: String? = nil
+    ) {
         self.cloneDelay = cloneDelay
+        self.audioContentSHA256 = audioContentSHA256
     }
 
     func prepare(source: WatchTransferSource, transferID: UUID) async throws -> PreparedWatchTransfer {
         let value = PreparedWatchTransfer(
             transferID: transferID,
             audioURL: source.audioURL,
-            artworkURL: source.artworkURL
+            artworkURL: source.artworkURL,
+            audioContentSHA256: audioContentSHA256
         )
         prepared[transferID] = value
         return value
@@ -1525,7 +1574,9 @@ private actor WatchSnapshotStoreStub: WatchTransferSnapshotStoring {
         let value = PreparedWatchTransfer(
             transferID: destinationTransferID,
             audioURL: source.audioURL,
-            artworkURL: source.artworkURL
+            artworkURL: source.artworkURL,
+            audioContentSHA256: source.audioContentSHA256,
+            artworkContentSHA256: source.artworkContentSHA256
         )
         prepared[destinationTransferID] = value
         return value

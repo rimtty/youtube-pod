@@ -19,6 +19,7 @@ final class WatchSessionReceiver {
     private let peer: any WatchPeerSyncing
     private let availableCapacity: @MainActor @Sendable () -> Int64?
     private let invalidatePlaybackItem: @MainActor @Sendable (String) -> Void
+    private let scheduleBackgroundRecovery: @MainActor @Sendable () -> Void
 
     private var hasStarted = false
     private var synchronizationOperation: SynchronizationOperation?
@@ -42,13 +43,15 @@ final class WatchSessionReceiver {
         library: WatchAudioLibraryService,
         peer: any WatchPeerSyncing,
         availableCapacity: @escaping @MainActor @Sendable () -> Int64? = { nil },
-        invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+        invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+        scheduleBackgroundRecovery: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         self.stager = stager
         self.library = library
         self.peer = peer
         self.availableCapacity = availableCapacity
         self.invalidatePlaybackItem = invalidatePlaybackItem
+        self.scheduleBackgroundRecovery = scheduleBackgroundRecovery
     }
 
     func start() {
@@ -85,8 +88,13 @@ final class WatchSessionReceiver {
     }
 
     func synchronizeNow() async {
-        let task = ensureSynchronizationTask(requestAnotherPassIfRunning: true)
-        await task.value
+        repeat {
+            let task = ensureSynchronizationTask(requestAnotherPassIfRunning: true)
+            await task.value
+            // A foreground wake can race a cancelled background operation.
+            // That operation cannot perform another pass itself, so honor the
+            // coalesced request with a fresh task after it has unwound.
+        } while needsAnotherPass
     }
 
     /// A foreground transition is an opportunity to recover a WCSession inbox
@@ -99,6 +107,16 @@ final class WatchSessionReceiver {
         if wasStarted {
             peer.activate()
         }
+        do {
+            try await peer.waitForActivation()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            WatchSyncLog.watchReceiver.error(
+                "foreground_resume activation_failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
+            return
+        }
+        WatchSyncLog.watchReceiver.notice("foreground_resume activation_ready")
         await synchronizeNow()
     }
 
@@ -110,6 +128,10 @@ final class WatchSessionReceiver {
         WatchSyncLog.watchReceiver.notice("background_task_started")
         start()
         do {
+            // A previous wake may already have staged a durable receipt. Import
+            // it before waiting for a fresh WCSession activation so a transient
+            // activation delay cannot hold a large file until foreground.
+            try await synchronizeForBackgroundTask()
             try await peer.waitForActivation()
             try await peer.waitUntilContentDrained()
 
@@ -142,6 +164,35 @@ final class WatchSessionReceiver {
             await waitUntilSynchronizationIdle()
             lastErrorMessage = error.localizedDescription
         }
+        scheduleRecoveryIfNeeded()
+    }
+
+    /// Retries durable receipts and acknowledgements after watchOS expires the
+    /// short WatchConnectivity execution window. App refresh is best effort,
+    /// but removes the previous requirement to wait for a manual app launch.
+    func handleRecoveryBackgroundTask() async {
+        WatchSyncLog.watchReceiver.notice("recovery_task_started")
+        start()
+        do {
+            try await synchronizeForBackgroundTask()
+            try await peer.waitForActivation()
+            try await synchronizeForBackgroundTask()
+            await waitUntilSynchronizationIdle()
+            try Task.checkCancellation()
+            WatchSyncLog.watchReceiver.notice("recovery_task_completed")
+        } catch is CancellationError {
+            WatchSyncLog.watchReceiver.notice("recovery_task_cancelled")
+            cancelSynchronizationForSuspension()
+            await waitUntilSynchronizationIdle()
+        } catch {
+            WatchSyncLog.watchReceiver.error(
+                "recovery_task_failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
+            cancelSynchronizationForSuspension()
+            await waitUntilSynchronizationIdle()
+            lastErrorMessage = error.localizedDescription
+        }
+        scheduleRecoveryIfNeeded()
     }
 
     func waitUntilSynchronizationIdle() async {
@@ -303,6 +354,25 @@ final class WatchSessionReceiver {
 
     private func cancelSynchronizationForSuspension() {
         synchronizationOperation?.task.cancel()
+    }
+
+    private func scheduleRecoveryIfNeeded() {
+        do {
+            let hasStagedFiles = !(try stager.listStagedFiles()).isEmpty
+            let hasStagedCommands = !(try stager.listStagedCommands()).isEmpty
+            let hasPendingAcknowledgements = !(try library.pendingAcknowledgements()).isEmpty
+            let hasPendingWork = hasStagedFiles
+                || hasStagedCommands
+                || hasPendingAcknowledgements
+            guard hasPendingWork else { return }
+            WatchSyncLog.watchReceiver.notice("recovery_required")
+            scheduleBackgroundRecovery()
+        } catch {
+            WatchSyncLog.watchReceiver.error(
+                "recovery_check_failed code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
+            scheduleBackgroundRecovery()
+        }
     }
 
     private func flushAcknowledgements() -> Bool {

@@ -49,6 +49,51 @@ struct WatchAudioValidatorTests {
         #expect(validated.actualDuration > 0)
     }
 
+    @Test func iPhoneValidatedFlatM4AUsesDigestAndContainerFastPath() async throws {
+        let url = try makeM4AAudioFile()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let size = Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        let duration = try ISOBaseMediaDurationReader.duration(at: url)
+        let digest = try WatchFileDigest.sha256(at: url)
+
+        let validated = try await AVFoundationWatchAudioValidator().validate(
+            fileURL: url,
+            envelope: envelope(
+                fileSize: size,
+                duration: duration,
+                contentSHA256: digest,
+                audioValidationProfile: .normalizedFlatM4A
+            )
+        )
+
+        #expect(validated.actualFileSize == size)
+        #expect(abs(validated.actualDuration - duration) < 0.01)
+    }
+
+    @Test func iPhoneValidatedAudioRejectsSameSizeCorruption() async throws {
+        let url = try makeM4AAudioFile()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let data = try Data(contentsOf: url)
+        let size = Int64(data.count)
+        let duration = try ISOBaseMediaDurationReader.duration(at: url)
+        let digest = try WatchFileDigest.sha256(at: url)
+        var corrupted = data
+        corrupted[corrupted.index(before: corrupted.endIndex)] ^= 0xff
+        try corrupted.write(to: url)
+
+        await #expect(throws: WatchAudioValidationError.digestMismatch) {
+            _ = try await AVFoundationWatchAudioValidator().validate(
+                fileURL: url,
+                envelope: envelope(
+                    fileSize: size,
+                    duration: duration,
+                    contentSHA256: digest,
+                    audioValidationProfile: .normalizedFlatM4A
+                )
+            )
+        }
+    }
+
     @Test func nonM4AExtensionIsRejectedBeforeAssetLoading() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio.mp3")
 
@@ -106,7 +151,12 @@ struct WatchAudioValidatorTests {
         }
     }
 
-    private func envelope(fileSize: Int64, duration: TimeInterval = 0.1) -> WatchTransferEnvelope {
+    private func envelope(
+        fileSize: Int64,
+        duration: TimeInterval = 0.1,
+        contentSHA256: String? = nil,
+        audioValidationProfile: WatchAudioValidationProfile? = nil
+    ) -> WatchTransferEnvelope {
         WatchTransferEnvelope(
             transferID: UUID(),
             revision: 1,
@@ -118,7 +168,9 @@ struct WatchAudioValidatorTests {
             viewCount: 1,
             duration: duration,
             fileSize: fileSize,
-            playbackPosition: 0
+            playbackPosition: 0,
+            contentSHA256: contentSHA256,
+            audioValidationProfile: audioValidationProfile
         )
     }
 

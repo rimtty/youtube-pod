@@ -51,8 +51,10 @@ final class WatchIncomingFileStager: @unchecked Sendable {
             ?? Self.defaultRootDirectoryURL(fileManager: fileManager)
     }
 
-    /// Copies `sourceURL` before returning, because WatchConnectivity owns and may
-    /// delete that URL as soon as its delegate callback completes.
+    /// Moves `sourceURL` into the durable inbox before returning, because
+    /// WatchConnectivity owns and may delete that URL as soon as its delegate
+    /// callback completes. A copy fallback handles an unusual cross-volume
+    /// callback URL without making the normal path write a large M4A twice.
     func stage(
         fileAt sourceURL: URL,
         metadata: [String: Any]
@@ -77,9 +79,11 @@ final class WatchIncomingFileStager: @unchecked Sendable {
                     at: stagingDirectoryURL,
                     withIntermediateDirectories: false
                 )
+                applyBackgroundFileProtection(at: stagingDirectoryURL)
 
                 let partialURL = stagingDirectoryURL.appending(path: Self.partialFileName)
-                try fileManager.copyItem(at: sourceURL, to: partialURL)
+                try preserveIncomingFile(at: sourceURL, to: partialURL)
+                applyBackgroundFileProtection(at: partialURL)
 
                 let actualSize = try regularFileSize(at: partialURL)
                 guard actualSize == envelope.fileSize else {
@@ -96,11 +100,13 @@ final class WatchIncomingFileStager: @unchecked Sendable {
 
                 let envelopeURL = stagingDirectoryURL.appending(path: Self.envelopeFileName)
                 try encode(envelope).write(to: envelopeURL, options: .atomic)
+                applyBackgroundFileProtection(at: envelopeURL)
 
                 // Renaming a directory on the same volume is atomic. Consumers
                 // therefore observe either no receipt or a complete payload and
                 // durable envelope sidecar, never an intermediate combination.
                 try fileManager.moveItem(at: stagingDirectoryURL, to: readyDirectoryURL)
+                applyBackgroundFileProtection(at: readyDirectoryURL)
 
                 return StagedWatchTransferFile(
                     envelope: envelope,
@@ -372,6 +378,33 @@ final class WatchIncomingFileStager: @unchecked Sendable {
             at: rootDirectoryURL,
             withIntermediateDirectories: true
         )
+        applyBackgroundFileProtection(at: rootDirectoryURL)
+    }
+
+    private func preserveIncomingFile(at sourceURL: URL, to destinationURL: URL) throws {
+        do {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        } catch let moveError {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try? fileManager.removeItem(at: destinationURL)
+            }
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                throw moveError
+            }
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        }
+    }
+
+    /// Normal lock/unlock cycles must not make a durably received transfer
+    /// unreadable to a background WatchConnectivity wake. Files remain
+    /// protected until the first unlock after a reboot.
+    private func applyBackgroundFileProtection(at url: URL) {
+#if os(watchOS)
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+#endif
     }
 
     private func sorted(_ files: [StagedWatchTransferFile]) -> [StagedWatchTransferFile] {

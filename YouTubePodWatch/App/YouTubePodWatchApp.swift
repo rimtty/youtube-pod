@@ -69,6 +69,9 @@ struct YouTubePodWatchApp: App {
                 peer: WatchWCSessionPeerSyncService(stager: stager),
                 invalidatePlaybackItem: { videoID in
                     player.removeFromQueue(youtubeID: videoID)
+                },
+                scheduleBackgroundRecovery: {
+                    WatchBackgroundSyncScheduler.schedule()
                 }
             )
             self.container = container
@@ -123,6 +126,10 @@ struct YouTubePodWatchApp: App {
         .backgroundTask(.watchConnectivity) { [receiver] in
             guard runsProductionServices else { return }
             await receiver.handleConnectivityBackgroundTask()
+        }
+        .backgroundTask(.appRefresh(WatchBackgroundSyncScheduler.identifier)) { [receiver] in
+            guard runsProductionServices else { return }
+            await receiver.handleRecoveryBackgroundTask()
         }
     }
 

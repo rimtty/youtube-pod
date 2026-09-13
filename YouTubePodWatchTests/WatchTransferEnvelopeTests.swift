@@ -62,6 +62,25 @@ struct WatchTransferEnvelopeTests {
         #expect(throws: WatchTransferProtocolError.invalidPlaybackPosition) {
             try fixture(playbackPosition: -.infinity).metadata()
         }
+        #expect(throws: WatchTransferProtocolError.invalidContentDigest) {
+            try fixture(contentSHA256: "not-a-digest").metadata()
+        }
+        #expect(throws: WatchTransferProtocolError.invalidValidationProfile) {
+            try fixture(audioValidationProfile: .normalizedFlatM4A).metadata()
+        }
+    }
+
+    @Test func normalizedAudioValidationMetadataRoundTrips() throws {
+        let digest = String(repeating: "ab", count: 32)
+        let envelope = fixture(
+            contentSHA256: digest,
+            audioValidationProfile: .normalizedFlatM4A
+        )
+
+        let decoded = try WatchTransferEnvelope.decode(metadata: envelope.metadata())
+
+        #expect(decoded.contentSHA256 == digest)
+        #expect(decoded.audioValidationProfile == .normalizedFlatM4A)
     }
 
     @Test func acknowledgementRoundTripPreservesIdentityAndOutcome() throws {
@@ -202,7 +221,9 @@ struct WatchTransferEnvelopeTests {
         youtubeID: String = "dQw4w9WgXcQ",
         duration: TimeInterval = 245,
         fileSize: Int64 = 8_192,
-        playbackPosition: TimeInterval = 92
+        playbackPosition: TimeInterval = 92,
+        contentSHA256: String? = nil,
+        audioValidationProfile: WatchAudioValidationProfile? = nil
     ) -> WatchTransferEnvelope {
         WatchTransferEnvelope(
             schemaVersion: schemaVersion,
@@ -216,7 +237,9 @@ struct WatchTransferEnvelopeTests {
             viewCount: 1_234,
             duration: duration,
             fileSize: fileSize,
-            playbackPosition: playbackPosition
+            playbackPosition: playbackPosition,
+            contentSHA256: contentSHA256,
+            audioValidationProfile: audioValidationProfile
         )
     }
 }

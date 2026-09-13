@@ -367,13 +367,12 @@ final class WatchAudioLibraryService {
             guard !fileManager.fileExists(atPath: finalAudioURL.path) else {
                 return reject(staged, code: .persistenceFailure, message: "同じ転送IDの音声が既に存在します。")
             }
-            // The receipt is the crash-recovery journal. Keep its payload
-            // intact until the SwiftData transaction commits; on relaunch an
-            // orphan final copy is removed and the receipt is imported again.
-            // The destination did not exist above, so this import attempt owns
-            // any complete or partial file left by copyItem.
+            // The receipt is the crash-recovery journal. A hard link promotes
+            // the exact validated bytes without a second full M4A copy while
+            // retaining the receipt until SwiftData commits. If hard links are
+            // unavailable, the copy fallback preserves the same transaction.
             ownedFinalAudioURL = finalAudioURL
-            try fileManager.copyItem(at: staged.fileURL, to: finalAudioURL)
+            try installReceiptPayload(at: staged.fileURL, to: finalAudioURL)
             try audioImportCheckpoint(.afterFinalAudioCopy)
 
             let pendingArtworkURL = pendingArtworkFileURL(transferID: envelope.transferID)
@@ -384,7 +383,7 @@ final class WatchAudioLibraryService {
                let pendingEnvelope = try? decodeEnvelope(at: pendingSidecarURL),
                matchingIdentity(pendingEnvelope, envelope) {
                 do {
-                    try fileManager.copyItem(at: pendingArtworkURL, to: finalArtworkURL)
+                    try installReceiptPayload(at: pendingArtworkURL, to: finalArtworkURL)
                     installedArtwork = true
                     ownedFinalArtworkURL = finalArtworkURL
                 } catch {
@@ -492,7 +491,7 @@ final class WatchAudioLibraryService {
                     return .duplicate
                 }
                 let finalURL = artworkFileURL(transferID: envelope.transferID)
-                try fileManager.copyItem(at: staged.fileURL, to: finalURL)
+                try installReceiptPayload(at: staged.fileURL, to: finalURL)
                 saved.thumbnailRelativePath = relativePath(for: finalURL)
                 try metadata().advanceGeneration()
                 guard persist() else {
@@ -509,7 +508,7 @@ final class WatchAudioLibraryService {
             }
             try encodeEnvelope(envelope).write(to: sidecarURL, options: .atomic)
             do {
-                try fileManager.copyItem(at: staged.fileURL, to: pendingURL)
+                try installReceiptPayload(at: staged.fileURL, to: pendingURL)
             } catch {
                 removeFileIfPresent(sidecarURL)
                 throw error
@@ -758,8 +757,34 @@ final class WatchAudioLibraryService {
 
     private func createDirectoriesIfNeeded() throws {
         for name in [Self.audioDirectory, Self.artworkDirectory, Self.pendingArtworkDirectory] {
-            try fileManager.createDirectory(at: directory(name), withIntermediateDirectories: true)
+            let url = directory(name)
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+            applyBackgroundFileProtection(at: url)
         }
+    }
+
+    private func installReceiptPayload(at sourceURL: URL, to destinationURL: URL) throws {
+        do {
+            try fileManager.linkItem(at: sourceURL, to: destinationURL)
+        } catch let linkError {
+            // A destination that appeared after the caller's ownership check
+            // belongs to another recovery attempt. Never remove or overwrite
+            // it while falling back from a hard link.
+            guard !fileManager.fileExists(atPath: destinationURL.path) else {
+                throw linkError
+            }
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        }
+        applyBackgroundFileProtection(at: destinationURL)
+    }
+
+    private func applyBackgroundFileProtection(at url: URL) {
+#if os(watchOS)
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+#endif
     }
 
     private func removeFileIfPresent(_ url: URL?) {

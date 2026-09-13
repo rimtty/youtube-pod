@@ -25,6 +25,40 @@ struct AVFoundationWatchAudioValidator: WatchAudioValidating {
             throw WatchAudioValidationError.sizeMismatch(expected: envelope.fileSize, actual: actualFileSize)
         }
 
+        if envelope.audioValidationProfile == .normalizedFlatM4A,
+           let expectedDigest = envelope.contentSHA256 {
+            try Task.checkCancellation()
+            let actualDigest = try WatchFileDigest.sha256(at: url)
+            try Task.checkCancellation()
+            guard actualDigest == expectedDigest else {
+                throw WatchAudioValidationError.digestMismatch
+            }
+            let boxes: WatchISOBaseMediaContainerSummary
+            let measuredDuration: TimeInterval
+            do {
+                boxes = try WatchISOBaseMediaContainerSummary(url: url)
+                measuredDuration = try ISOBaseMediaDurationReader.duration(at: url)
+            } catch {
+                throw WatchAudioValidationError.invalidNormalizedContainer
+            }
+            guard boxes.count(of: "moov") == 1,
+                  boxes.count(of: "mdat") >= 1,
+                  boxes.count(of: "moof") == 0 else {
+                throw WatchAudioValidationError.invalidNormalizedContainer
+            }
+            let durationTolerance = max(1, min(5, envelope.duration * 0.01))
+            guard abs(measuredDuration - envelope.duration) <= durationTolerance else {
+                throw WatchAudioValidationError.durationMismatch(
+                    expected: envelope.duration,
+                    actual: measuredDuration
+                )
+            }
+            return ValidatedWatchAudio(
+                actualFileSize: actualFileSize,
+                actualDuration: envelope.duration
+            )
+        }
+
         let asset = AVURLAsset(url: url)
         do {
             let audioTracks = try await asset.loadTracks(withMediaType: .audio)
@@ -73,6 +107,8 @@ enum WatchAudioValidationError: LocalizedError, Equatable, Sendable {
     case missingAudioTrack
     case containsVideoTrack
     case invalidDuration
+    case digestMismatch
+    case invalidNormalizedContainer
     case durationMismatch(expected: TimeInterval, actual: TimeInterval)
     case unreadable(String)
 
@@ -88,6 +124,10 @@ enum WatchAudioValidationError: LocalizedError, Equatable, Sendable {
             "動画トラックを含むファイルは保存できません。"
         case .invalidDuration:
             "再生時間が正しくありません。"
+        case .digestMismatch:
+            "転送された音声データの整合性を確認できませんでした。"
+        case .invalidNormalizedContainer:
+            "Watch用音声のコンテナ構造が正しくありません。"
         case .durationMismatch:
             "転送された音声の再生時間が一致しません。"
         case .unreadable(let detail):
