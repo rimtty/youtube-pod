@@ -52,6 +52,7 @@ struct WatchTransfersView: View {
                                     canRecreateTransfer: savedAudio(for: record.youtubeID) != nil,
                                     liveProgress: environment.watchTransfers.liveProgress[record.youtubeID],
                                     liveEstimate: environment.watchTransfers.liveEstimates[record.youtubeID],
+                                    queuePosition: WatchTransferQueuePresentation.position(of: record, in: visibleRecords),
                                     optimizationProgress: environment.optimizer.progress[record.youtubeID],
                                     onRetry: { retry(record) },
                                     onCancel: { environment.watchTransfers.cancel(videoID: record.youtubeID) },
@@ -411,6 +412,7 @@ private struct WatchTransferRow: View {
     let canRecreateTransfer: Bool
     let liveProgress: Double?
     let liveEstimate: WatchTransferEstimate?
+    let queuePosition: Int?
     let optimizationProgress: LibraryAudioOptimizationProgress?
     let onRetry: () -> Void
     let onCancel: () -> Void
@@ -438,7 +440,7 @@ private struct WatchTransferRow: View {
                     HStack(spacing: 6) {
                         Label(stateLabelText, systemImage: record.state.symbolName)
                             .foregroundStyle(record.state.tint)
-                        if record.state == .transferring,
+                        if record.state == .transferring, !isWaitingForTurn,
                            let estimateText = WatchTransferEstimatePresentation.text(for: liveEstimate) {
                             Text(estimateText)
                                 .foregroundStyle(.secondary)
@@ -473,6 +475,8 @@ private struct WatchTransferRow: View {
                     } else {
                         indeterminateProgress(text: "音声を確認しています")
                     }
+                } else if isWaitingForTurn {
+                    indeterminateProgress(text: "先に投入した転送の完了を待っています")
                 } else if record.state.showsIndeterminateProgress {
                     indeterminateProgress(
                         text: record.state == .queued
@@ -593,8 +597,19 @@ private struct WatchTransferRow: View {
         return WatchTransferPreparationProgress(stage: optimizationProgress)
     }
 
+    private var isWaitingForTurn: Bool {
+        WatchTransferQueuePresentation.isWaitingForTurn(
+            position: queuePosition,
+            rawProgress: liveProgress ?? record.lastKnownProgress
+        )
+    }
+
     private var stateLabelText: String {
-        preparation?.statusText ?? record.state.statusText
+        if let preparation { return preparation.statusText }
+        if isWaitingForTurn {
+            return WatchTransferQueuePresentation.waitingText(position: queuePosition ?? 0)
+        }
+        return record.state.statusText
     }
 
     private func indeterminateProgress(text: String) -> some View {

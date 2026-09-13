@@ -81,3 +81,27 @@ enum WatchTransferEstimatePresentation {
         return rest == 0 ? "残り約\(hours)時間" : "残り約\(hours)時間\(rest)分"
     }
 }
+
+/// WCSession delivers queued file transfers one at a time in submission
+/// order. Records behind the active one are `.transferring` too, but their
+/// progress stays at 0 until their turn, which reads as a stall.
+enum WatchTransferQueuePresentation {
+    /// 0 for the transfer WCSession is sending now, 1+ for those behind it,
+    /// nil when the record is not waiting on audio delivery.
+    static func position(of record: WatchTransferRecord, in records: [WatchTransferRecord]) -> Int? {
+        guard record.state == .transferring, !record.audioDeliveryFinished else { return nil }
+        let pending = records
+            .filter { $0.state == .transferring && !$0.audioDeliveryFinished }
+            .sorted { $0.queuedAt < $1.queuedAt }
+        return pending.firstIndex { $0.transferID == record.transferID }
+    }
+
+    static func isWaitingForTurn(position: Int?, rawProgress: Double?) -> Bool {
+        guard let position, position > 0 else { return false }
+        return (rawProgress ?? 0) <= 0
+    }
+
+    static func waitingText(position: Int) -> String {
+        "Watchへ転送待ち（\(position + 1)番目）"
+    }
+}
