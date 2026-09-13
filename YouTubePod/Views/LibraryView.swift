@@ -41,6 +41,8 @@ struct LibraryView: View {
                                         isSelectionMode: editMode.isEditing,
                                         watchTransferRecord: watchTransferRecord(for: audio.youtubeID),
                                         watchTransferProgress: environment.watchTransfers.liveProgress[audio.youtubeID],
+                                        watchTransferEstimate: environment.watchTransfers.liveEstimates[audio.youtubeID],
+                                        watchTransferQueuePosition: watchTransferQueuePosition(for: audio.youtubeID),
                                         optimizationProgress: environment.optimizer.progress[audio.youtubeID],
                                         watchCanTransfer: environment.watchTransfers.connectionStatus.canTransfer,
                                         onPlay: { play(audio) },
@@ -196,6 +198,11 @@ struct LibraryView: View {
         watchTransferRecords.first { $0.youtubeID == videoID }
     }
 
+    private func watchTransferQueuePosition(for videoID: String) -> Int? {
+        guard let record = watchTransferRecord(for: videoID) else { return nil }
+        return WatchTransferQueuePresentation.position(of: record, in: watchTransferRecords)
+    }
+
     private func performWatchAction(_ action: WatchTransferAction, for audio: SavedAudio) {
         switch action {
         case .enqueue:
@@ -327,6 +334,8 @@ private struct LibraryAudioRow: View {
     let isSelectionMode: Bool
     let watchTransferRecord: WatchTransferRecord?
     let watchTransferProgress: Double?
+    let watchTransferEstimate: WatchTransferEstimate?
+    let watchTransferQueuePosition: Int?
     let optimizationProgress: LibraryAudioOptimizationProgress?
     let watchCanTransfer: Bool
     let onPlay: () -> Void
@@ -354,6 +363,8 @@ private struct LibraryAudioRow: View {
                 isPlaying: isPlaying,
                 watchTransferRecord: watchTransferRecord,
                 watchTransferProgress: watchTransferProgress,
+                watchTransferEstimate: watchTransferEstimate,
+                watchTransferQueuePosition: watchTransferQueuePosition,
                 optimizationProgress: optimizationProgress,
                 watchCanTransfer: watchCanTransfer,
                 onWatchAction: onWatchAction
@@ -431,6 +442,8 @@ private struct LibraryPlaybackFooter: View {
     let isPlaying: Bool
     let watchTransferRecord: WatchTransferRecord?
     let watchTransferProgress: Double?
+    let watchTransferEstimate: WatchTransferEstimate?
+    let watchTransferQueuePosition: Int?
     let optimizationProgress: LibraryAudioOptimizationProgress?
     let watchCanTransfer: Bool
     let onWatchAction: (WatchTransferAction) -> Void
@@ -520,18 +533,30 @@ private struct LibraryPlaybackFooter: View {
         let preparation = state == .preparing
             ? optimizationProgress.map(WatchTransferPreparationProgress.init(stage:))
             : nil
-        let statusText = preparation?.statusText ?? state.statusText
+        let isWaitingForTurn = WatchTransferQueuePresentation.isWaitingForTurn(
+            position: watchTransferQueuePosition,
+            rawProgress: watchTransferRawProgress
+        )
+        let statusText = preparation?.statusText
+            ?? (isWaitingForTurn ? WatchTransferQueuePresentation.waitingText(position: watchTransferQueuePosition ?? 0) : state.statusText)
+        let showsIndeterminate = state.showsIndeterminateProgress || isWaitingForTurn
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Label(statusText, systemImage: "applewatch.and.arrow.forward")
                     .lineLimit(1)
+                if state == .transferring, !isWaitingForTurn,
+                   let estimateText = WatchTransferEstimatePresentation.text(for: watchTransferEstimate) {
+                    Text(estimateText)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 8)
                 if let preparation {
                     if let fraction = preparation.fraction {
                         Text("\(Int((fraction * 100).rounded(.down)))%")
                             .monospacedDigit()
                     }
-                } else if !state.showsIndeterminateProgress {
+                } else if !showsIndeterminate {
                     Text("\(WatchTransferProgressPresentation.percentage(watchTransferRawProgress))%")
                         .monospacedDigit()
                 }
@@ -545,8 +570,9 @@ private struct LibraryPlaybackFooter: View {
                     .accessibilityValue(
                         preparation.fraction.map { "\(Int(($0 * 100).rounded(.down)))パーセント" } ?? "準備中"
                     )
-            } else if state.showsIndeterminateProgress {
-                // No WCSession progress exists before transferFile is called.
+            } else if showsIndeterminate {
+                // No WCSession progress exists before transferFile is called,
+                // nor while an earlier transfer is still being delivered.
                 ProgressView()
                     .tint(PodPalette.violet)
                     .frame(maxWidth: .infinity, alignment: .leading)
