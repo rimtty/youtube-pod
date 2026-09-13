@@ -70,6 +70,70 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         XCTAssertEqual(envelope.audioValidationProfile, .normalizedFlatM4A)
     }
 
+    func testEnqueueStaysPreparingWhileLibraryAudioIsOptimizedThenTransfers() async throws {
+        let fixture = try makeFixture(optimizerMode: .blocking)
+        let source = try makeSource(id: "optimize001", artwork: false)
+
+        let enqueue = Task { try await fixture.service.enqueue(source) }
+        try await waitUntil { fixture.optimizer.activeVideoID == source.youtubeID }
+
+        XCTAssertEqual(record(source.youtubeID, in: fixture.context)?.state, .preparing)
+        XCTAssertTrue(fixture.transport.sent.isEmpty)
+        // Foreground activation re-emits statusChanged; a live preparation
+        // must not be demoted to reconciliation by it.
+        fixture.transport.emit(.statusChanged(fixture.transport.status))
+        await Task.yield()
+        XCTAssertEqual(record(source.youtubeID, in: fixture.context)?.state, .preparing)
+
+        fixture.optimizer.release()
+        try await enqueue.value
+
+        let record = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        XCTAssertEqual(record.state, .transferring)
+        XCTAssertEqual(fixture.transport.sent.count, 1)
+        XCTAssertEqual(fixture.optimizer.optimizedVideoIDs, [source.youtubeID])
+    }
+
+    func testCancellationDuringOptimizationIsNotOverwrittenWhenItCompletes() async throws {
+        let fixture = try makeFixture(optimizerMode: .blocking)
+        let source = try makeSource(id: "optimize002", artwork: false)
+
+        let enqueue = Task { try await fixture.service.enqueue(source) }
+        try await waitUntil { fixture.optimizer.activeVideoID == source.youtubeID }
+        fixture.service.cancel(videoID: source.youtubeID)
+        XCTAssertEqual(record(source.youtubeID, in: fixture.context)?.state, .failed)
+
+        fixture.optimizer.release()
+        try await enqueue.value
+
+        let record = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        XCTAssertEqual(record.state, .failed)
+        // No snapshot exists yet, so the retry path must re-enqueue instead
+        // of cloning.
+        XCTAssertTrue(record.requiresFreshSnapshotForRetry)
+        XCTAssertTrue(fixture.transport.sent.isEmpty)
+        let contains = await fixture.snapshots.storedTransferIDs()
+        XCTAssertTrue(contains.isEmpty)
+    }
+
+    func testOptimizationFailureMarksTransferForFreshSnapshotRetry() async throws {
+        let fixture = try makeFixture(optimizerMode: .failing)
+        let source = try makeSource(id: "optimize003", artwork: false)
+
+        do {
+            try await fixture.service.enqueue(source)
+            XCTFail("Expected the optimizer failure to surface")
+        } catch WatchTransferSnapshotError.normalizationFailed {
+            // Expected.
+        }
+
+        let record = try XCTUnwrap(record(source.youtubeID, in: fixture.context))
+        XCTAssertEqual(record.state, .failed)
+        XCTAssertEqual(record.lastErrorCode, "snapshot")
+        XCTAssertTrue(record.requiresFreshSnapshotForRetry)
+        XCTAssertTrue(fixture.transport.sent.isEmpty)
+    }
+
     func testWatchAcknowledgementIsRequiredBeforeTransferBecomesAvailable() async throws {
         let fixture = try makeFixture()
         let source = try makeSource(id: "transfer002", artwork: false)
@@ -1120,6 +1184,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             modelContext: fixture.context,
             transport: restartedTransport,
             snapshots: fixture.snapshots,
+            optimizer: fixture.optimizer,
             inventoryCursorStore: cursorStore,
             automaticRetryDelays: []
         )
@@ -1272,6 +1337,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
         confirmationTimeout: TimeInterval = 30 * 60,
         start: Bool = true,
         snapshotAudioContentSHA256: String? = nil,
+        optimizerMode: WatchOptimizerStub.Mode = .immediate,
         inventoryCursorStore: WatchInventoryCursorStoreStub = WatchInventoryCursorStoreStub(),
         inventoryRequestStore: WatchInventoryRequestStoreStub = WatchInventoryRequestStoreStub(),
         makeInventoryRequest: @escaping @MainActor () -> WatchInventoryRequest = {
@@ -1288,10 +1354,15 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             cloneDelay: cloneDelay,
             audioContentSHA256: snapshotAudioContentSHA256
         )
+        let optimizer = WatchOptimizerStub(
+            digest: snapshotAudioContentSHA256 ?? String(repeating: "0", count: 64),
+            mode: optimizerMode
+        )
         let service = PhoneWatchTransferService(
             modelContext: container.mainContext,
             transport: transport,
             snapshots: snapshots,
+            optimizer: optimizer,
             inventoryCursorStore: inventoryCursorStore,
             inventoryRequestStore: inventoryRequestStore,
             makeInventoryRequest: makeInventoryRequest,
@@ -1304,6 +1375,7 @@ final class PhoneWatchTransferServiceTests: XCTestCase {
             context: container.mainContext,
             transport: transport,
             snapshots: snapshots,
+            optimizer: optimizer,
             inventoryCursorStore: inventoryCursorStore,
             inventoryRequestStore: inventoryRequestStore,
             service: service
@@ -1420,9 +1492,70 @@ private struct Fixture {
     let context: ModelContext
     let transport: WatchTransportStub
     let snapshots: WatchSnapshotStoreStub
+    let optimizer: WatchOptimizerStub
     let inventoryCursorStore: WatchInventoryCursorStoreStub
     let inventoryRequestStore: WatchInventoryRequestStoreStub
     let service: PhoneWatchTransferService
+}
+
+/// Stands in for `LibraryAudioOptimizer`. `.immediate` mirrors an already
+/// normalized library item; `.blocking` holds `enqueue` in `.preparing`
+/// until `release()`; `.failing` mirrors a corrupt file.
+@MainActor
+final class WatchOptimizerStub: LibraryAudioOptimizing {
+    enum Mode {
+        case immediate
+        case blocking
+        case failing
+    }
+
+    struct Failure: Error {}
+
+    private(set) var progress: [String: LibraryAudioOptimizationProgress] = [:]
+    private(set) var activeVideoID: String?
+    private(set) var optimizedVideoIDs: [String] = []
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private let digest: String
+    private let mode: Mode
+
+    init(digest: String, mode: Mode) {
+        self.digest = digest
+        self.mode = mode
+    }
+
+    func optimize(videoID: String) async throws -> OptimizedLibraryAudio {
+        optimizedVideoIDs.append(videoID)
+        switch mode {
+        case .immediate:
+            break
+        case .failing:
+            throw Failure()
+        case .blocking:
+            activeVideoID = videoID
+            progress[videoID] = .remuxing(0.5)
+            await withCheckedContinuation { continuation in
+                continuations.append(continuation)
+            }
+            progress[videoID] = nil
+            activeVideoID = nil
+        }
+        return OptimizedLibraryAudio(
+            audioURL: URL(fileURLWithPath: "/tmp/\(videoID).m4a"),
+            contentSHA256: digest,
+            fileSize: 64
+        )
+    }
+
+    func release() {
+        let pending = continuations
+        continuations = []
+        for continuation in pending {
+            continuation.resume()
+        }
+    }
+
+    func resumeBackfill() {}
+    func pauseBackfill() {}
 }
 
 @MainActor
@@ -1553,7 +1686,7 @@ private actor WatchSnapshotStoreStub: WatchTransferSnapshotStoring {
             transferID: transferID,
             audioURL: source.audioURL,
             artworkURL: source.artworkURL,
-            audioContentSHA256: audioContentSHA256
+            audioContentSHA256: source.audioContentSHA256 ?? audioContentSHA256
         )
         prepared[transferID] = value
         return value

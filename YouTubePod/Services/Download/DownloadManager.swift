@@ -10,12 +10,14 @@ final class DownloadManager {
     private var cancelledVideoIDs = Set<String>()
     private let extractor: any AudioExtracting
     private let library: any AudioLibraryManaging
+    private let optimizer: (any LibraryAudioOptimizing)?
     private let extractionRetryDelays: [Duration]
     private let maximumConcurrentDownloads: Int
 
     init(
         extractor: any AudioExtracting,
         library: any AudioLibraryManaging,
+        optimizer: (any LibraryAudioOptimizing)? = nil,
         extractionRetryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)],
         // The embedded CPython/WebKit challenge runtime is process-global.
         // Keep user taps queued instead of constructing overlapping web views.
@@ -24,8 +26,15 @@ final class DownloadManager {
         precondition(maximumConcurrentDownloads > 0)
         self.extractor = extractor
         self.library = library
+        self.optimizer = optimizer
         self.extractionRetryDelays = extractionRetryDelays
         self.maximumConcurrentDownloads = maximumConcurrentDownloads
+    }
+
+    /// True while any download still owns its file (before the audio is in
+    /// the library). Optimization of an already saved item does not count.
+    var isExtracting: Bool {
+        phases.values.contains { $0.isExtracting }
     }
 
     func enqueue(_ video: VideoSummary) {
@@ -38,7 +47,9 @@ final class DownloadManager {
     }
 
     func cancel(videoID: String) async {
-        guard phases[videoID]?.isActive == true else { return }
+        // Once the audio is saved there is nothing to abort: the optimization
+        // pass keeps the library item playable whether or not it finishes.
+        guard phases[videoID]?.isExtracting == true else { return }
         cancelledVideoIDs.insert(videoID)
         if activeTasks[videoID] != nil {
             await extractor.cancel(requestID: videoID)
@@ -56,7 +67,9 @@ final class DownloadManager {
         for id in queuedIDs {
             phases[id] = .failed("バックグラウンド移行のためキャンセルしました")
         }
-        let activeVideoIDs = Array(activeTasks.keys)
+        // Items in `.optimizing` are already saved; their job continues under
+        // the optimizer's own background grant instead of being abandoned.
+        let activeVideoIDs = activeTasks.keys.filter { phases[$0]?.isExtracting == true }
         cancelledVideoIDs.formUnion(activeVideoIDs)
         for videoID in activeVideoIDs {
             await extractor.cancel(requestID: videoID)
@@ -96,12 +109,32 @@ final class DownloadManager {
                 try? library.delete(saved)
                 throw CancellationError()
             }
+            await optimizeSavedAudio(videoID: saved.youtubeID)
             phases[video.id] = .completed
         } catch {
             phases[video.id] = .failed(
                 cancelledVideoIDs.contains(video.id) ? "キャンセルしました" : error.localizedDescription
             )
         }
+    }
+
+    /// Flattens the saved file while this download still holds the serial
+    /// slot, so the remux never competes with the next yt-dlp run for disk
+    /// bandwidth. Failures are not surfaced here: the item is playable as is
+    /// and the optimizer's backfill retries it later.
+    private func optimizeSavedAudio(videoID: String) async {
+        guard let optimizer else { return }
+        phases[videoID] = .optimizing(0)
+        let observation = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                if let value = optimizer.progress[videoID] {
+                    self?.phases[videoID] = .optimizing(value.overallFraction)
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        defer { observation.cancel() }
+        _ = try? await optimizer.optimize(videoID: videoID)
     }
 
     private func extractWithRetry(_ video: VideoSummary) async throws -> ExtractedAudio {

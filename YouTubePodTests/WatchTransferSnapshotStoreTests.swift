@@ -1,30 +1,8 @@
-import AVFoundation
+import AVFAudio
 import XCTest
 @testable import YouTubePod
 
 final class WatchTransferSnapshotStoreTests: XCTestCase {
-    func testNormalizerFlattensFragmentedM4AAndPreservesDuration() async throws {
-        let sourceURL = try XCTUnwrap(
-            Bundle(for: Self.self).url(forResource: "fragmented-aac", withExtension: "m4a")
-        )
-        let outputDirectory = temporaryDirectory(named: "normalized-audio")
-        defer { try? FileManager.default.removeItem(at: outputDirectory) }
-        let destinationURL = outputDirectory.appendingPathComponent("audio.m4a")
-
-        try await AVFoundationWatchAudioNormalizer().normalize(
-            sourceURL: sourceURL,
-            destinationURL: destinationURL
-        )
-
-        let outputAsset = AVURLAsset(url: destinationURL)
-        let outputDuration = try await outputAsset.load(.duration).seconds
-        let boxes = try ISOBaseMediaFileSummary(url: destinationURL)
-        XCTAssertEqual(outputDuration, 1.523, accuracy: 0.05)
-        XCTAssertEqual(boxes.count(of: "moov"), 1)
-        XCTAssertGreaterThanOrEqual(boxes.count(of: "mdat"), 1)
-        XCTAssertEqual(boxes.count(of: "moof"), 0)
-    }
-
     func testPreparedSnapshotSurvivesSourceDeletionAndCanBeCloned() async throws {
         let root = temporaryDirectory(named: "snapshots")
         let sourceDirectory = temporaryDirectory(named: "source")
@@ -38,21 +16,19 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
         let artwork = Data("artwork-payload".utf8)
         try audio.write(to: audioURL)
         try artwork.write(to: artworkURL)
-        let store = WatchTransferSnapshotStore(
-            rootURL: root,
-            audioNormalizer: CopyingWatchAudioNormalizer()
-        )
+        let digest = try WatchFileDigest.sha256(at: audioURL)
+        let store = WatchTransferSnapshotStore(rootURL: root)
         let firstID = UUID()
 
         let prepared = try await store.prepare(
-            source: source(audioURL: audioURL, artworkURL: artworkURL),
+            source: source(audioURL: audioURL, artworkURL: artworkURL, digest: digest),
             transferID: firstID
         )
         try FileManager.default.removeItem(at: sourceDirectory)
 
         XCTAssertEqual(try Data(contentsOf: prepared.audioURL), audio)
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(prepared.artworkURL)), artwork)
-        XCTAssertEqual(prepared.audioContentSHA256, try WatchFileDigest.sha256(at: prepared.audioURL))
+        XCTAssertEqual(prepared.audioContentSHA256, digest)
         XCTAssertEqual(
             prepared.artworkContentSHA256,
             try WatchFileDigest.sha256(at: XCTUnwrap(prepared.artworkURL))
@@ -72,20 +48,76 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
         XCTAssertNotNil(retained)
     }
 
+    func testPrepareWritesProvidedDigestWithoutRereadingTheAudio() async throws {
+        let root = temporaryDirectory(named: "digest-passthrough")
+        let sourceDirectory = temporaryDirectory(named: "digest-source")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: sourceDirectory)
+        }
+        let audioURL = sourceDirectory.appendingPathComponent("audio.m4a")
+        try Data("not-a-real-container".utf8).write(to: audioURL)
+        // Deliberately not the digest of the bytes: the store must trust the
+        // optimizer's value instead of hashing the file again.
+        let providedDigest = String(repeating: "c", count: 64)
+        let store = WatchTransferSnapshotStore(rootURL: root)
+        let transferID = UUID()
+
+        let prepared = try await store.prepare(
+            source: source(audioURL: audioURL, artworkURL: nil, digest: providedDigest),
+            transferID: transferID
+        )
+
+        XCTAssertEqual(prepared.audioContentSHA256, providedDigest)
+        let sidecar = root
+            .appendingPathComponent(transferID.uuidString, isDirectory: true)
+            .appendingPathComponent("audio.sha256")
+        XCTAssertEqual(
+            try String(contentsOf: sidecar, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+            providedDigest
+        )
+    }
+
+    func testPrepareWithoutDigestOnlyHashesFlatContainers() async throws {
+        let root = temporaryDirectory(named: "digest-fallback")
+        let sourceDirectory = temporaryDirectory(named: "digest-fallback-source")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: sourceDirectory)
+        }
+        let fragmentedURL = try XCTUnwrap(
+            Bundle(for: Self.self).url(forResource: "fragmented-aac", withExtension: "m4a")
+        )
+        let flatURL = try makeFlatM4AAudioFile(in: sourceDirectory)
+        let store = WatchTransferSnapshotStore(rootURL: root)
+
+        // A fragmented file must not be advertised as normalized: the Watch
+        // would reject its container on the digest fast path.
+        let fragmented = try await store.prepare(
+            source: source(audioURL: fragmentedURL, artworkURL: nil, digest: nil),
+            transferID: UUID()
+        )
+        XCTAssertNil(fragmented.audioContentSHA256)
+
+        let flat = try await store.prepare(
+            source: source(audioURL: flatURL, artworkURL: nil, digest: nil),
+            transferID: UUID()
+        )
+        XCTAssertEqual(flat.audioContentSHA256, try WatchFileDigest.sha256(at: flatURL))
+    }
+
     func testMissingAudioSourceIsRejectedWithoutCreatingTransferDirectory() async throws {
         let root = temporaryDirectory(named: "missing")
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = WatchTransferSnapshotStore(
-            rootURL: root,
-            audioNormalizer: CopyingWatchAudioNormalizer()
-        )
+        let store = WatchTransferSnapshotStore(rootURL: root)
         let transferID = UUID()
 
         do {
             _ = try await store.prepare(
                 source: source(
                     audioURL: root.appendingPathComponent("does-not-exist.m4a"),
-                    artworkURL: nil
+                    artworkURL: nil,
+                    digest: nil
                 ),
                 transferID: transferID
             )
@@ -109,18 +141,15 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
         }
         let audioURL = sourceDirectory.appendingPathComponent("audio.m4a")
         try Data("audio".utf8).write(to: audioURL)
-        let store = WatchTransferSnapshotStore(
-            rootURL: root,
-            audioNormalizer: CopyingWatchAudioNormalizer()
-        )
+        let store = WatchTransferSnapshotStore(rootURL: root)
         let retainedID = UUID()
         let orphanID = UUID()
         _ = try await store.prepare(
-            source: source(audioURL: audioURL, artworkURL: nil),
+            source: source(audioURL: audioURL, artworkURL: nil, digest: nil),
             transferID: retainedID
         )
         _ = try await store.prepare(
-            source: source(audioURL: audioURL, artworkURL: nil),
+            source: source(audioURL: audioURL, artworkURL: nil, digest: nil),
             transferID: orphanID
         )
         let interrupted = root.appendingPathComponent(".interrupted-copy", isDirectory: true)
@@ -135,81 +164,7 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: interrupted.path))
     }
 
-    func testPrepareNormalizesFragmentedM4AForArbitraryPositionDecoding() async throws {
-        let root = temporaryDirectory(named: "fragmented-normalization")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fixtureURL = try XCTUnwrap(
-            Bundle(for: Self.self).url(forResource: "fragmented-aac", withExtension: "m4a")
-        )
-        let sourceBoxes = try ISOBaseMediaFileSummary(url: fixtureURL)
-        XCTAssertGreaterThan(sourceBoxes.count(of: "moof"), 1)
-        XCTAssertGreaterThan(sourceBoxes.count(of: "mdat"), 1)
-        let store = WatchTransferSnapshotStore(rootURL: root)
-
-        let prepared = try await store.prepare(
-            source: source(audioURL: fixtureURL, artworkURL: nil),
-            transferID: UUID()
-        )
-
-        let outputBoxes = try ISOBaseMediaFileSummary(url: prepared.audioURL)
-        XCTAssertEqual(outputBoxes.count(of: "moof"), 0)
-        XCTAssertEqual(outputBoxes.count(of: "moov"), 1)
-        XCTAssertEqual(outputBoxes.count(of: "mdat"), 1)
-
-        let asset = AVURLAsset(url: prepared.audioURL)
-        let duration = try await asset.load(.duration)
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
-        let track = try XCTUnwrap(tracks.first)
-        let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(
-            track: track,
-            outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM]
-        )
-        XCTAssertTrue(reader.canAdd(output))
-        reader.add(output)
-        let target = CMTimeMultiplyByFloat64(duration, multiplier: 0.75)
-        reader.timeRange = CMTimeRange(
-            start: target,
-            duration: CMTime(seconds: 0.2, preferredTimescale: 600)
-        )
-        XCTAssertTrue(reader.startReading())
-        let sample = try XCTUnwrap(output.copyNextSampleBuffer())
-        XCTAssertGreaterThanOrEqual(
-            CMSampleBufferGetPresentationTimeStamp(sample).seconds,
-            target.seconds - 0.1
-        )
-        XCTAssertNotEqual(reader.status, .failed)
-    }
-
-    func testProductionNormalizerRejectsInvalidAudioWithoutLeavingSnapshot() async throws {
-        let root = temporaryDirectory(named: "invalid-normalization")
-        let sourceDirectory = temporaryDirectory(named: "invalid-normalization-source")
-        defer {
-            try? FileManager.default.removeItem(at: root)
-            try? FileManager.default.removeItem(at: sourceDirectory)
-        }
-        let invalidAudioURL = sourceDirectory.appendingPathComponent("invalid.m4a")
-        try Data("not-an-audio-file".utf8).write(to: invalidAudioURL)
-        let store = WatchTransferSnapshotStore(rootURL: root)
-
-        do {
-            _ = try await store.prepare(
-                source: source(audioURL: invalidAudioURL, artworkURL: nil),
-                transferID: UUID()
-            )
-            XCTFail("Expected normalization to reject invalid audio")
-        } catch WatchTransferSnapshotError.normalizationFailed {
-            // Expected.
-        }
-
-        let remaining = try FileManager.default.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: nil
-        )
-        XCTAssertTrue(remaining.isEmpty)
-    }
-
-    private func source(audioURL: URL, artworkURL: URL?) -> WatchTransferSource {
+    private func source(audioURL: URL, artworkURL: URL?, digest: String?) -> WatchTransferSource {
         WatchTransferSource(
             youtubeID: "dQw4w9WgXcQ",
             title: "Snapshot",
@@ -219,8 +174,28 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
             duration: 120,
             playbackPosition: 30,
             audioURL: audioURL,
-            artworkURL: artworkURL
+            artworkURL: artworkURL,
+            audioContentSHA256: digest
         )
+    }
+
+    private func makeFlatM4AAudioFile(in directory: URL) throws -> URL {
+        let url = directory.appendingPathComponent("flat.m4a")
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 64_000,
+            ]
+        )
+        let buffer = try XCTUnwrap(
+            AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4_410)
+        )
+        buffer.frameLength = 4_410
+        try file.write(from: buffer)
+        return url
     }
 
     private func temporaryDirectory(named name: String) -> URL {
@@ -228,11 +203,5 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
             .appendingPathComponent("YouTubePod-Watch-\(name)-\(UUID().uuidString)", isDirectory: true)
         try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
-    }
-}
-
-private struct CopyingWatchAudioNormalizer: WatchAudioNormalizing {
-    func normalize(sourceURL: URL, destinationURL: URL) async throws {
-        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
     }
 }

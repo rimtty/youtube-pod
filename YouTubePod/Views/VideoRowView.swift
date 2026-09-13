@@ -160,6 +160,24 @@ struct VideoRowView: View {
             }
         case .validating:
             DownloadStatusLabel(icon: "checkmark.shield", text: "音声を確認中", tint: PodPalette.violet)
+        case .optimizing(let progress):
+            // The audio is already saved; the library file is being rewritten
+            // into a flat M4A so it can go to Apple Watch without delay.
+            HStack(spacing: 8) {
+                ProgressView(value: progress)
+                    .tint(PodPalette.violet)
+                    .accessibilityLabel("最適化進捗")
+                    .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
+                Text("音声を最適化中")
+                    .font(.caption.bold())
+                    .foregroundStyle(PodPalette.violet)
+                    .lineLimit(1)
+                Text(progress, format: .percent.precision(.fractionLength(0)))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .contain)
         case .completed:
             DownloadStatusLabel(icon: "checkmark.circle.fill", text: "保存済み", tint: .green)
         case .failed(let message):

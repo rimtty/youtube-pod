@@ -51,6 +51,7 @@ struct WatchTransfersView: View {
                                     thumbnailURL: thumbnailURL(for: record.youtubeID),
                                     canRecreateTransfer: savedAudio(for: record.youtubeID) != nil,
                                     liveProgress: environment.watchTransfers.liveProgress[record.youtubeID],
+                                    optimizationProgress: environment.optimizer.progress[record.youtubeID],
                                     onRetry: { retry(record) },
                                     onCancel: { environment.watchTransfers.cancel(videoID: record.youtubeID) },
                                     onDiscardRetry: { retryDiscardTarget = record },
@@ -210,18 +211,25 @@ struct WatchTransferActionButton: View {
     var body: some View {
         Group {
             if isWaiting {
-                ProgressView(value: progress)
+                ProgressView()
                     .progressViewStyle(.circular)
                     .tint(PodPalette.violet)
                     .frame(width: 44, height: 44)
                     .accessibilityLabel(statusText)
-                    .accessibilityValue("\(Int((progress * 100).rounded()))パーセント")
             } else if action == .cancel {
                 Button(action: performAction) {
                     ZStack {
-                        ProgressView(value: progress)
-                            .progressViewStyle(.circular)
-                            .tint(PodPalette.violet)
+                        if showsIndeterminateProgress {
+                            // Nothing measurable happens before transferFile;
+                            // a spinning ring reads as "working", 0% as stuck.
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(PodPalette.violet)
+                        } else {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.circular)
+                                .tint(PodPalette.violet)
+                        }
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .black))
                             .foregroundStyle(.secondary)
@@ -231,7 +239,11 @@ struct WatchTransferActionButton: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(accessibilityLabel)
-                .accessibilityValue("\(Int((progress * 100).rounded()))パーセント")
+                .accessibilityValue(
+                    showsIndeterminateProgress
+                        ? state?.statusText ?? ""
+                        : "\(WatchTransferProgressPresentation.percentage(progress))パーセント"
+                )
                 .accessibilityHint(accessibilityHint)
             } else {
                 Button(action: performAction) {
@@ -257,7 +269,11 @@ struct WatchTransferActionButton: View {
     }
 
     private var progress: Double {
-        min(max(liveProgress ?? record?.lastKnownProgress ?? 0, 0), 1)
+        WatchTransferProgressPresentation.displayed(liveProgress ?? record?.lastKnownProgress)
+    }
+
+    private var showsIndeterminateProgress: Bool {
+        state?.showsIndeterminateProgress == true
     }
 
     private var action: WatchTransferAction? {
@@ -393,6 +409,7 @@ private struct WatchTransferRow: View {
     let thumbnailURL: URL?
     let canRecreateTransfer: Bool
     let liveProgress: Double?
+    let optimizationProgress: LibraryAudioOptimizationProgress?
     let onRetry: () -> Void
     let onCancel: () -> Void
     let onDiscardRetry: () -> Void
@@ -416,9 +433,9 @@ private struct WatchTransferRow: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Label(stateText, systemImage: stateSymbol)
+                    Label(stateLabelText, systemImage: record.state.symbolName)
                         .font(.caption.bold())
-                        .foregroundStyle(stateColor)
+                        .foregroundStyle(record.state.tint)
                 }
                 Spacer(minLength: 0)
             }
@@ -434,6 +451,24 @@ private struct WatchTransferRow: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("転送済み。Apple Watchの取り込み完了を待っています")
+                } else if let preparation {
+                    if let fraction = preparation.fraction {
+                        ProgressView(value: fraction) {
+                            Text("\(Int((fraction * 100).rounded(.down)))%")
+                                .monospacedDigit()
+                        }
+                        .tint(PodPalette.violet)
+                        .accessibilityLabel("Watch用の音声最適化の進捗")
+                        .accessibilityValue("\(Int((fraction * 100).rounded(.down)))パーセント")
+                    } else {
+                        indeterminateProgress(text: "音声を確認しています")
+                    }
+                } else if record.state.showsIndeterminateProgress {
+                    indeterminateProgress(
+                        text: record.state == .queued
+                            ? "WatchConnectivityの送信開始を待っています"
+                            : "転送ファイルを準備しています"
+                    )
                 } else {
                     ProgressView(value: progress) {
                         Text("\(displayedPercentage)%")
@@ -531,46 +566,35 @@ private struct WatchTransferRow: View {
     }
 
     private var progress: Double {
-        min(max(liveProgress ?? record.lastKnownProgress, 0), 1)
+        WatchTransferProgressPresentation.displayed(liveProgress ?? record.lastKnownProgress)
     }
 
     private var displayedPercentage: Int {
         // WCSession progress can reach (or round to) 100% before the
         // didFinish callback. Reserve 100% for the completed delivery phase
         // so the UI never presents an in-flight transfer as finished.
-        min(Int((progress * 100).rounded(.down)), 99)
+        WatchTransferProgressPresentation.percentage(liveProgress ?? record.lastKnownProgress)
     }
 
-    private var stateText: String {
-        switch record.state {
-        case .preparing: "転送を準備中"
-        case .queued: "転送待ち"
-        case .transferring: "転送中"
-        case .awaitingWatchConfirmation: "Watchで取り込み中"
-        case .availableOnWatch: "Watchで利用できます"
-        case .cancelling: "キャンセル中"
-        case .deletionPending: "Watchから削除中"
-        case .failed: "転送できませんでした"
-        case .reconciliationRequired: "Watchとの再同期が必要です"
-        case .removedFromWatch: "Watchから削除済み"
-        }
+    /// Optimizer progress applies only while this record is being prepared;
+    /// a backfill of the same item after the transfer must not show here.
+    private var preparation: WatchTransferPreparationProgress? {
+        guard record.state == .preparing, let optimizationProgress else { return nil }
+        return WatchTransferPreparationProgress(stage: optimizationProgress)
     }
 
-    private var stateSymbol: String {
-        switch record.state {
-        case .availableOnWatch: "checkmark.circle.fill"
-        case .failed, .reconciliationRequired: "exclamationmark.triangle.fill"
-        case .deletionPending, .cancelling: "hourglass"
-        case .preparing, .queued, .transferring, .awaitingWatchConfirmation: "arrow.up.circle.fill"
-        case .removedFromWatch: "trash.circle"
-        }
+    private var stateLabelText: String {
+        preparation?.statusText ?? record.state.statusText
     }
 
-    private var stateColor: Color {
-        switch record.state {
-        case .availableOnWatch: PodPalette.sky
-        case .failed, .reconciliationRequired: .red
-        default: PodPalette.violet
+    private func indeterminateProgress(text: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .tint(PodPalette.violet)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .combine)
     }
 }

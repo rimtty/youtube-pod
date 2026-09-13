@@ -281,6 +281,89 @@ final class AudioLibraryServiceTests: XCTestCase {
         XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<SavedAudio>()).isEmpty)
     }
 
+    func testReimportResetsNormalizationRecordBecauseBytesChanged() async throws {
+        let container = try ModelContainer(
+            for: SavedAudio.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let service = AudioLibraryService(modelContext: container.mainContext)
+        let metadata = video(id: "library0010")
+        let saved = try await service.importAudio(extracted(for: metadata), metadata: metadata)
+        try service.recordNormalizedAudio(
+            videoID: metadata.id,
+            contentSHA256: String(repeating: "d", count: 64),
+            fileSize: 4_096,
+            normalizationVersion: 1
+        )
+        XCTAssertTrue(saved.isNormalized(currentVersion: 1))
+        XCTAssertEqual(saved.fileSize, 4_096)
+
+        _ = try await service.importAudio(extracted(for: metadata), metadata: metadata)
+
+        XCTAssertNil(saved.audioContentSHA256)
+        XCTAssertEqual(saved.audioNormalizationVersion, 0)
+        XCTAssertFalse(saved.isNormalized(currentVersion: 1))
+        XCTAssertEqual(saved.fileSize, try fileSize(at: service.audioURL(for: saved)))
+    }
+
+    func testAudiosRequiringNormalizationListsNewestUnnormalizedFirst() async throws {
+        let container = try ModelContainer(
+            for: SavedAudio.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let service = AudioLibraryService(modelContext: container.mainContext)
+        let older = video(id: "library0011")
+        let newer = video(id: "library0012")
+        let normalized = video(id: "library0013")
+        let olderSaved = try await service.importAudio(extracted(for: older), metadata: older)
+        let newerSaved = try await service.importAudio(extracted(for: newer), metadata: newer)
+        let normalizedSaved = try await service.importAudio(extracted(for: normalized), metadata: normalized)
+        olderSaved.downloadedAt = Date(timeIntervalSince1970: 100)
+        newerSaved.downloadedAt = Date(timeIntervalSince1970: 300)
+        normalizedSaved.downloadedAt = Date(timeIntervalSince1970: 200)
+        try container.mainContext.save()
+        try service.recordNormalizedAudio(
+            videoID: normalized.id,
+            contentSHA256: String(repeating: "e", count: 64),
+            fileSize: 1,
+            normalizationVersion: 1
+        )
+
+        XCTAssertEqual(
+            service.audiosRequiringNormalization(currentVersion: 1).map(\.youtubeID),
+            [newer.id, older.id]
+        )
+        XCTAssertEqual(
+            service.audiosRequiringNormalization(currentVersion: 2).map(\.youtubeID),
+            [newer.id, normalized.id, older.id]
+        )
+        XCTAssertEqual(service.savedAudio(videoID: newer.id)?.youtubeID, newer.id)
+        XCTAssertNil(service.savedAudio(videoID: "missing0000"))
+        XCTAssertThrowsError(
+            try service.recordNormalizedAudio(
+                videoID: "missing0000",
+                contentSHA256: String(repeating: "f", count: 64),
+                fileSize: 1,
+                normalizationVersion: 1
+            )
+        )
+    }
+
+    private func extracted(for metadata: VideoSummary) throws -> ExtractedAudio {
+        ExtractedAudio(
+            fileURL: try makeM4AAudioFile(),
+            videoID: metadata.id,
+            title: metadata.title,
+            channel: metadata.channelTitle,
+            duration: metadata.duration,
+            thumbnailURL: nil
+        )
+    }
+
+    private func fileSize(at url: URL) throws -> Int64 {
+        Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+    }
+
     private func makeM4AAudioFile() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("YouTubePod-LibraryTest-\(UUID().uuidString)", isDirectory: true)

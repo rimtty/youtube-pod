@@ -64,6 +64,12 @@ final class SavedAudio {
     var thumbnailRelativePath: String?
     var lastPlaybackPosition: TimeInterval
     var hasBeenPlayed: Bool = false
+    /// SHA-256 of `Audio/<id>.m4a` once it has been normalized into a flat
+    /// M4A container. `nil` means the file is still the raw yt-dlp download.
+    /// Every path that rewrites the audio file must reset this together with
+    /// `audioNormalizationVersion`, otherwise Apple Watch rejects the digest.
+    var audioContentSHA256: String? = nil
+    var audioNormalizationVersion: Int = 0
 
     init(
         youtubeID: String,
@@ -77,7 +83,9 @@ final class SavedAudio {
         audioRelativePath: String,
         thumbnailRelativePath: String? = nil,
         lastPlaybackPosition: TimeInterval = 0,
-        hasBeenPlayed: Bool = false
+        hasBeenPlayed: Bool = false,
+        audioContentSHA256: String? = nil,
+        audioNormalizationVersion: Int = 0
     ) {
         self.youtubeID = youtubeID
         self.title = title
@@ -91,11 +99,17 @@ final class SavedAudio {
         self.thumbnailRelativePath = thumbnailRelativePath
         self.lastPlaybackPosition = lastPlaybackPosition
         self.hasBeenPlayed = hasBeenPlayed
+        self.audioContentSHA256 = audioContentSHA256
+        self.audioNormalizationVersion = audioNormalizationVersion
     }
 
     var playbackProgress: Double {
         guard duration.isFinite, duration > 0, lastPlaybackPosition.isFinite else { return 0 }
         return min(max(lastPlaybackPosition / duration, 0), 1)
+    }
+
+    func isNormalized(currentVersion: Int) -> Bool {
+        audioContentSHA256 != nil && audioNormalizationVersion >= currentVersion
     }
 }
 
@@ -113,13 +127,63 @@ enum DownloadPhase: Equatable, Sendable {
     case downloading(Double)
     case retrying(attempt: Int, maximumRetries: Int)
     case validating
+    /// The audio is already saved and playable; the library file is being
+    /// rewritten into a flat M4A so Apple Watch transfers can start at once.
+    case optimizing(Double)
     case completed
     case failed(String)
 
     var isActive: Bool {
         switch self {
-        case .queued, .downloading, .retrying, .validating: true
+        case .queued, .downloading, .retrying, .validating, .optimizing: true
         case .completed, .failed: false
+        }
+    }
+
+    /// True while the yt-dlp extraction or import still owns the file, i.e.
+    /// before the audio exists in the library.
+    var isExtracting: Bool {
+        switch self {
+        case .queued, .downloading, .retrying, .validating: true
+        case .optimizing, .completed, .failed: false
+        }
+    }
+}
+
+/// Result of normalizing one library audio file into a flat M4A container.
+struct OptimizedLibraryAudio: Equatable, Sendable {
+    let audioURL: URL
+    let contentSHA256: String
+    let fileSize: Int64
+}
+
+enum LibraryAudioOptimizationProgress: Equatable, Sendable {
+    /// AVFoundation is parsing the fragmented source; no sample has been
+    /// copied yet, so there is no meaningful fraction.
+    case inspecting
+    case remuxing(Double)
+    case verifying
+    case hashing(Double)
+
+    /// Combined 0...1 estimate for a single progress bar. The remux dominates
+    /// wall-clock time, hashing is one sequential read of the output.
+    var overallFraction: Double {
+        switch self {
+        case .inspecting:
+            0
+        case .remuxing(let fraction):
+            min(max(fraction, 0), 1) * 0.9
+        case .verifying:
+            0.9
+        case .hashing(let fraction):
+            0.9 + min(max(fraction, 0), 1) * 0.1
+        }
+    }
+
+    var isIndeterminate: Bool {
+        switch self {
+        case .inspecting, .verifying: true
+        case .remuxing, .hashing: false
         }
     }
 }

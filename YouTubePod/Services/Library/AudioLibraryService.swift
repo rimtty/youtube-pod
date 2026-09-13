@@ -85,6 +85,10 @@ final class AudioLibraryService: AudioLibraryManaging {
             existing.fileSize = Int64(sourceSize)
             existing.audioRelativePath = "Audio/\(audioName)"
             existing.thumbnailRelativePath = artworkRelativePath ?? existing.thumbnailRelativePath
+            // The audio bytes were just replaced by a fresh raw download, so a
+            // previously recorded digest no longer describes the file.
+            existing.audioContentSHA256 = nil
+            existing.audioNormalizationVersion = 0
         } else {
             saved = SavedAudio(
                 youtubeID: metadata.id,
@@ -151,6 +155,38 @@ final class AudioLibraryService: AudioLibraryManaging {
         audio.thumbnailRelativePath.map { rootURL.appendingPathComponent($0) }
     }
 
+    func savedAudio(videoID: String) -> SavedAudio? {
+        var descriptor = FetchDescriptor<SavedAudio>(predicate: #Predicate { $0.youtubeID == videoID })
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
+    }
+
+    func audiosRequiringNormalization(currentVersion: Int) -> [SavedAudio] {
+        let descriptor = FetchDescriptor<SavedAudio>(
+            sortBy: [SortDescriptor(\.downloadedAt, order: .reverse)]
+        )
+        let audios = (try? modelContext.fetch(descriptor)) ?? []
+        return audios.filter { !$0.isNormalized(currentVersion: currentVersion) }
+    }
+
+    func recordNormalizedAudio(
+        videoID: String,
+        contentSHA256: String,
+        fileSize: Int64,
+        normalizationVersion: Int
+    ) throws {
+        guard let audio = savedAudio(videoID: videoID) else { throw LibraryError.missingAudio }
+        audio.audioContentSHA256 = contentSHA256
+        audio.audioNormalizationVersion = normalizationVersion
+        audio.fileSize = fileSize
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
+
     private func removeOrphanedFiles() {
         guard let savedAudios = try? modelContext.fetch(FetchDescriptor<SavedAudio>()) else { return }
         var retainedPaths = Set<String>()
@@ -188,13 +224,14 @@ final class AudioLibraryService: AudioLibraryManaging {
 }
 
 enum LibraryError: LocalizedError {
-    case videoIDMismatch, unsupportedFormat, notAudioOnly, insufficientStorage
+    case videoIDMismatch, unsupportedFormat, notAudioOnly, insufficientStorage, missingAudio
     var errorDescription: String? {
         switch self {
         case .videoIDMismatch: "選択した動画と取得結果が一致しません。"
         case .unsupportedFormat: "M4A形式以外の音声は保存できません。"
         case .notAudioOnly: "保存ファイルに動画トラックが含まれているか、音声トラックがありません。"
         case .insufficientStorage: "端末の空き容量が不足しています。"
+        case .missingAudio: "ライブラリに音声が見つかりません。"
         }
     }
 }

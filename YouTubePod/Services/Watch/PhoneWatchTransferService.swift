@@ -9,6 +9,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private let modelContext: ModelContext
     private let transport: any WatchConnectivityTransport
     private let snapshots: any WatchTransferSnapshotStoring
+    private let optimizer: any LibraryAudioOptimizing
     private let inventoryCursorStore: any WatchInventoryCursorStoring
     private let inventoryRequestStore: any WatchInventoryRequestStoring
     private let makeInventoryRequest: @MainActor () -> WatchInventoryRequest
@@ -20,6 +21,9 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private var confirmationTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var hasStarted = false
     private var sessionStartedTransferIDs: Set<UUID> = []
+    /// Transfers whose `enqueue` is still awaiting the optimizer or snapshot
+    /// in this process. Reconciliation must not treat them as abandoned.
+    private var preparingTransferIDs: Set<UUID> = []
     private var pendingInventoryRequest: WatchInventoryRequest?
     private var publishedInventoryRequestID: UUID?
 
@@ -32,6 +36,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         modelContext: ModelContext,
         transport: any WatchConnectivityTransport,
         snapshots: any WatchTransferSnapshotStoring,
+        optimizer: any LibraryAudioOptimizing,
         inventoryCursorStore: any WatchInventoryCursorStoring = UserDefaultsWatchInventoryCursorStore(),
         inventoryRequestStore: any WatchInventoryRequestStoring = UserDefaultsWatchInventoryRequestStore(),
         makeInventoryRequest: @escaping @MainActor () -> WatchInventoryRequest = {
@@ -44,6 +49,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         self.modelContext = modelContext
         self.transport = transport
         self.snapshots = snapshots
+        self.optimizer = optimizer
         self.inventoryCursorStore = inventoryCursorStore
         self.inventoryRequestStore = inventoryRequestStore
         self.makeInventoryRequest = makeInventoryRequest
@@ -155,9 +161,44 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             throw WatchTransferServiceError.persistence(error.localizedDescription)
         }
 
+        preparingTransferIDs.insert(transferID)
+        defer { preparingTransferIDs.remove(transferID) }
+
+        // The library file is normally already a flat, hashed M4A, so this
+        // returns at once. A not-yet-optimized item (pre-upgrade library or
+        // an interrupted download pass) is normalized here first; the UI
+        // shows the optimizer's progress while the record stays `.preparing`.
+        let optimized: OptimizedLibraryAudio
+        do {
+            optimized = try await optimizer.optimize(videoID: source.youtubeID)
+        } catch {
+            WatchSyncLog.phoneService.error(
+                "prepare_failed transfer=\(transferID.uuidString, privacy: .public) stage=optimize code=\(WatchSyncLog.errorCode(error), privacy: .public)"
+            )
+            guard isStillPreparing(record, transferID: transferID) else { return }
+            restorePreviousIdentity(
+                of: record,
+                transferID: previousTransferID,
+                revision: previousRevision
+            )
+            markFailed(
+                record,
+                code: "snapshot",
+                message: WatchTransferSnapshotError.normalizationFailed.localizedDescription
+            )
+            _ = persistChanges()
+            throw WatchTransferSnapshotError.normalizationFailed
+        }
+        // The user may have cancelled while the optimizer ran; that outcome
+        // must not be overwritten by the rest of this enqueue.
+        guard isStillPreparing(record, transferID: transferID) else { return }
+
         let prepared: PreparedWatchTransfer
         do {
-            prepared = try await snapshots.prepare(source: source, transferID: transferID)
+            prepared = try await snapshots.prepare(
+                source: source.withOptimizedAudio(optimized),
+                transferID: transferID
+            )
             record.sourceFileSize = try fileSize(at: prepared.audioURL)
             WatchSyncLog.phoneService.notice(
                 "prepare_completed transfer=\(transferID.uuidString, privacy: .public) bytes=\(record.sourceFileSize) artwork=\(prepared.artworkURL != nil)"
@@ -167,6 +208,7 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 "prepare_failed transfer=\(transferID.uuidString, privacy: .public) code=\(WatchSyncLog.errorCode(error), privacy: .public)"
             )
             await snapshots.removeTransfer(transferID)
+            guard isStillPreparing(record, transferID: transferID) else { return }
             restorePreviousIdentity(
                 of: record,
                 transferID: previousTransferID,
@@ -175,6 +217,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             markFailed(record, code: "snapshot", message: error.localizedDescription)
             _ = persistChanges()
             throw error
+        }
+        guard isStillPreparing(record, transferID: transferID) else {
+            await snapshots.removeTransfer(transferID)
+            return
         }
 
         do {
@@ -208,11 +254,14 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         let hadPendingConfirmation = confirmationTimeoutTasks[videoID] != nil
         cancelScheduledTasks(videoID: videoID)
         guard record.state.isTransferActive || hadPendingRetry || hadPendingConfirmation else { return }
+        // A transfer cancelled while still preparing has no snapshot to clone,
+        // so a later retry must go through a fresh enqueue.
+        let hadSnapshot = record.state != .preparing
         record.state = .cancelling
         record.senderFailed = true
         record.updatedAt = .now
         transport.cancelFiles(transferID: record.transferID)
-        markFailed(record, code: "cancelled", message: "転送をキャンセルしました。")
+        markFailed(record, code: hadSnapshot ? "cancelled" : "snapshot", message: "転送をキャンセルしました。")
         liveProgress[videoID] = nil
         if persistChanges() {
             sessionStartedTransferIDs.remove(record.transferID)
@@ -799,7 +848,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 liveProgress[record.youtubeID] = nil
             case .transferring:
                 updateReconciledAudioProgress(for: record, files: files)
-            case .preparing:
+            case .preparing where !preparingTransferIDs.contains(record.transferID):
+                // Only a record left over from a previous process is orphaned.
+                // An enqueue awaiting the optimizer in this process is live
+                // even though foreground `activate()` re-emits statusChanged.
                 record.state = .reconciliationRequired
             case .awaitingWatchConfirmation
                 where Date.now.timeIntervalSince(record.updatedAt) >= confirmationTimeout:
@@ -1024,6 +1076,10 @@ final class PhoneWatchTransferService: WatchTransferManaging {
 
     private func record(videoID: String) -> WatchTransferRecord? {
         fetchRecords().first { $0.youtubeID == videoID }
+    }
+
+    private func isStillPreparing(_ record: WatchTransferRecord, transferID: UUID) -> Bool {
+        record.transferID == transferID && record.state == .preparing
     }
 
     private func record(transferID: UUID) -> WatchTransferRecord? {

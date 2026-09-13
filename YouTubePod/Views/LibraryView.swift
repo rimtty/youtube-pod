@@ -41,6 +41,7 @@ struct LibraryView: View {
                                         isSelectionMode: editMode.isEditing,
                                         watchTransferRecord: watchTransferRecord(for: audio.youtubeID),
                                         watchTransferProgress: environment.watchTransfers.liveProgress[audio.youtubeID],
+                                        optimizationProgress: environment.optimizer.progress[audio.youtubeID],
                                         watchCanTransfer: environment.watchTransfers.connectionStatus.canTransfer,
                                         onPlay: { play(audio) },
                                         onWatchAction: { action in
@@ -326,6 +327,7 @@ private struct LibraryAudioRow: View {
     let isSelectionMode: Bool
     let watchTransferRecord: WatchTransferRecord?
     let watchTransferProgress: Double?
+    let optimizationProgress: LibraryAudioOptimizationProgress?
     let watchCanTransfer: Bool
     let onPlay: () -> Void
     let onWatchAction: (WatchTransferAction) -> Void
@@ -352,6 +354,7 @@ private struct LibraryAudioRow: View {
                 isPlaying: isPlaying,
                 watchTransferRecord: watchTransferRecord,
                 watchTransferProgress: watchTransferProgress,
+                optimizationProgress: optimizationProgress,
                 watchCanTransfer: watchCanTransfer,
                 onWatchAction: onWatchAction
             )
@@ -428,6 +431,7 @@ private struct LibraryPlaybackFooter: View {
     let isPlaying: Bool
     let watchTransferRecord: WatchTransferRecord?
     let watchTransferProgress: Double?
+    let optimizationProgress: LibraryAudioOptimizationProgress?
     let watchCanTransfer: Bool
     let onWatchAction: (WatchTransferAction) -> Void
 
@@ -471,22 +475,24 @@ private struct LibraryPlaybackFooter: View {
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
 
-            if watchTransferRecord?.state.isPendingTransfer == true {
+            if let state = watchTransferRecord?.state, state.isPendingTransfer {
+                watchTransferProgressView(for: state)
+            } else if let optimizationProgress {
+                // Background optimization of a saved item (no Watch transfer
+                // involved). Keep it quiet: one line, secondary color.
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Label(watchTransferStatusText, systemImage: "applewatch.and.arrow.forward")
+                        Label("音声を最適化中", systemImage: "waveform.badge.magnifyingglass")
                             .lineLimit(1)
                         Spacer(minLength: 8)
-                        Text("\(watchTransferPercentage)%")
-                            .monospacedDigit()
+                        if !optimizationProgress.isIndeterminate {
+                            Text("\(Int((optimizationProgress.overallFraction * 100).rounded(.down)))%")
+                                .monospacedDigit()
+                        }
                     }
                     .font(.caption2.bold())
-                    .foregroundStyle(PodPalette.violet)
-
-                    ProgressView(value: watchTransferDisplayedProgress)
-                        .tint(PodPalette.violet)
-                        .accessibilityLabel("Apple Watchへの転送進捗")
-                        .accessibilityValue("\(watchTransferPercentage)パーセント、\(watchTransferStatusText)")
+                    .foregroundStyle(.secondary)
+                    optimizationProgressBar(optimizationProgress, tint: .secondary)
                 }
             }
 
@@ -509,33 +515,69 @@ private struct LibraryPlaybackFooter: View {
         Int((audio.playbackProgress * 100).rounded())
     }
 
-    private var watchTransferProgressValue: Double {
-        min(max(watchTransferProgress ?? watchTransferRecord?.lastKnownProgress ?? 0, 0), 1)
-    }
+    @ViewBuilder
+    private func watchTransferProgressView(for state: WatchTransferState) -> some View {
+        let preparation = state == .preparing
+            ? optimizationProgress.map(WatchTransferPreparationProgress.init(stage:))
+            : nil
+        let statusText = preparation?.statusText ?? state.statusText
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Label(statusText, systemImage: "applewatch.and.arrow.forward")
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let preparation {
+                    if let fraction = preparation.fraction {
+                        Text("\(Int((fraction * 100).rounded(.down)))%")
+                            .monospacedDigit()
+                    }
+                } else if !state.showsIndeterminateProgress {
+                    Text("\(WatchTransferProgressPresentation.percentage(watchTransferRawProgress))%")
+                        .monospacedDigit()
+                }
+            }
+            .font(.caption2.bold())
+            .foregroundStyle(PodPalette.violet)
 
-    private var watchTransferDisplayedProgress: Double {
-        // WCSession delivery can reach 100% before the Watch confirms import.
-        // Keep in-flight rows below 100% until the record becomes available.
-        min(watchTransferProgressValue, 0.99)
-    }
-
-    private var watchTransferPercentage: Int {
-        min(Int((watchTransferDisplayedProgress * 100).rounded(.down)), 99)
-    }
-
-    private var watchTransferStatusText: String {
-        switch watchTransferRecord?.state {
-        case .preparing: "Watch転送を準備中"
-        case .queued: "Watchへ転送待ち"
-        case .transferring: "Watchへ転送中"
-        case .awaitingWatchConfirmation: "Watchで取り込み中"
-        case .availableOnWatch: "Watchで利用できます"
-        case .cancelling: "キャンセル中"
-        case .deletionPending: "Watchから削除中"
-        case .failed: "Watch転送に失敗"
-        case .reconciliationRequired: "Watchと再同期が必要"
-        case .removedFromWatch: "Watchから削除済み"
-        case nil: "Watchへ転送中"
+            if let preparation {
+                optimizationProgressBar(preparation.stage, tint: PodPalette.violet)
+                    .accessibilityLabel("Watch用の音声最適化の進捗")
+                    .accessibilityValue(
+                        preparation.fraction.map { "\(Int(($0 * 100).rounded(.down)))パーセント" } ?? "準備中"
+                    )
+            } else if state.showsIndeterminateProgress {
+                // No WCSession progress exists before transferFile is called.
+                ProgressView()
+                    .tint(PodPalette.violet)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel(statusText)
+            } else {
+                ProgressView(value: WatchTransferProgressPresentation.displayed(watchTransferRawProgress))
+                    .tint(PodPalette.violet)
+                    .accessibilityLabel("Apple Watchへの転送進捗")
+                    .accessibilityValue(
+                        "\(WatchTransferProgressPresentation.percentage(watchTransferRawProgress))パーセント、\(statusText)"
+                    )
+            }
         }
+    }
+
+    @ViewBuilder
+    private func optimizationProgressBar(
+        _ stage: LibraryAudioOptimizationProgress,
+        tint: Color
+    ) -> some View {
+        if stage.isIndeterminate {
+            ProgressView()
+                .tint(tint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ProgressView(value: stage.overallFraction)
+                .tint(tint)
+        }
+    }
+
+    private var watchTransferRawProgress: Double? {
+        watchTransferProgress ?? watchTransferRecord?.lastKnownProgress
     }
 }

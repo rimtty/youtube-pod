@@ -49,6 +49,9 @@ struct RootView: View {
                 if itemID == nil {
                     showsPlayer = false
                 }
+                // The backfill skips the item that is playing; revisit it
+                // once playback moves on.
+                environment.optimizer.resumeBackfill()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
@@ -58,8 +61,10 @@ struct RootView: View {
                     // was already published before suspension does not
                     // guarantee another Watch delivery callback.
                     environment.watchTransfers.resumeFromForeground()
+                    environment.optimizer.resumeBackfill()
                 case .background:
                     environment.player.persistPosition()
+                    environment.optimizer.pauseBackfill()
                     Task { await environment.downloads.cancelAll() }
                 case .inactive:
                     break
