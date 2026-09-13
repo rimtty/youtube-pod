@@ -53,9 +53,11 @@ struct RootView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .active:
-                    // Reattach to WCSession.outstandingFileTransfers and refresh
-                    // persisted progress as soon as the foreground UI returns.
-                    environment.watchTransfers.refreshState()
+                    // Use a fresh correlation identity on every foreground
+                    // boundary. Reusing an application-context payload that
+                    // was already published before suspension does not
+                    // guarantee another Watch delivery callback.
+                    environment.watchTransfers.resumeFromForeground()
                 case .background:
                     environment.player.persistPosition()
                     Task { await environment.downloads.cancelAll() }

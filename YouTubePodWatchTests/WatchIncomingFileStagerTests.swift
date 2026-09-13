@@ -15,8 +15,8 @@ struct WatchIncomingFileStagerTests {
                 fileAt: sourceURL,
                 metadata: envelope.metadata()
             )
-            try fixture.fileManager.removeItem(at: sourceURL)
 
+            #expect(!fixture.fileManager.fileExists(atPath: sourceURL.path))
             #expect(staged.fileURL.pathExtension == "m4a")
             #expect(staged.receiptDirectoryURL.lastPathComponent.hasPrefix("ready-"))
             #expect(try Data(contentsOf: staged.fileURL) == Data("audio".utf8))
@@ -80,7 +80,9 @@ struct WatchIncomingFileStagerTests {
 
             // Simulates WatchConnectivity deleting its callback URL immediately
             // after the synchronous delegate callback returns.
-            try fixture.fileManager.removeItem(at: sourceURL)
+            if fixture.fileManager.fileExists(atPath: sourceURL.path) {
+                try fixture.fileManager.removeItem(at: sourceURL)
+            }
 
             let listed = try recreated.listStagedFiles()
 

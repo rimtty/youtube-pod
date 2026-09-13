@@ -60,9 +60,41 @@ final class WatchSessionReceiverTests: XCTestCase {
         await fixture.receiver.resumeFromForeground()
 
         XCTAssertEqual(fixture.peer.activationCount, 2)
+        XCTAssertEqual(fixture.peer.activationWaitCount, 1)
         XCTAssertEqual(fetch(WatchSavedAudio.self, fixture.context).first?.youtubeID, "receiver017")
         XCTAssertEqual(fixture.peer.acknowledgements.last?.transferID, transferID)
         XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+    }
+
+    func testForegroundSynchronizationIsRetriedAfterRunningBackgroundPassIsCancelled() async throws {
+        let validator = CancellableReceiverAudioValidator()
+        let fixture = try makeFixture(validator: validator)
+        _ = try stageAudio(
+            with: fixture.stager,
+            videoID: "receiver018",
+            transferID: UUID(),
+            revision: 1
+        )
+        let backgroundSynchronization = Task { @MainActor in
+            await fixture.receiver.handleConnectivityBackgroundTask()
+        }
+        await validator.waitUntilValidationStarts()
+
+        let foregroundSynchronization = Task { @MainActor in
+            await fixture.receiver.synchronizeNow()
+        }
+        // Let the foreground request coalesce onto the running operation
+        // before simulating expiration of that background operation.
+        for _ in 0..<4 { await Task.yield() }
+        backgroundSynchronization.cancel()
+        await backgroundSynchronization.value
+        await foregroundSynchronization.value
+
+        XCTAssertEqual(fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID), ["receiver018"])
+        let validationCount = await validator.validationCount
+        XCTAssertEqual(validationCount, 2)
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+        XCTAssertEqual(fixture.peer.acknowledgements.last?.outcome, .imported)
     }
 
     func testEachSynchronizationPassRereadsRequestAndPublishesCorrelation() async throws {
@@ -380,7 +412,11 @@ final class WatchSessionReceiverTests: XCTestCase {
 
     func testCancelledBackgroundDrainKeepsDurableReceiptForNextWake() async throws {
         let validator = CancellableReceiverAudioValidator()
-        let fixture = try makeFixture(validator: validator)
+        let scheduleProbe = RecoveryScheduleProbe()
+        let fixture = try makeFixture(
+            validator: validator,
+            scheduleBackgroundRecovery: { scheduleProbe.schedule() }
+        )
         _ = try stageAudio(
             with: fixture.stager,
             videoID: "receiver013",
@@ -401,8 +437,9 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertTrue(hasReceipt)
         XCTAssertTrue(try fixture.service.pendingAcknowledgements().isEmpty)
         XCTAssertFalse(fixture.receiver.isReceiving)
+        XCTAssertEqual(scheduleProbe.count, 1)
 
-        await fixture.receiver.handleConnectivityBackgroundTask()
+        await fixture.receiver.handleRecoveryBackgroundTask()
 
         XCTAssertEqual(
             fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID),
@@ -412,36 +449,47 @@ final class WatchSessionReceiverTests: XCTestCase {
         XCTAssertEqual(fixture.peer.acknowledgements.last?.outcome, .imported)
     }
 
-    func testActivationFailureCancelsSynchronizationAndKeepsDurableReceipt() async throws {
-        let validator = CancellableReceiverAudioValidator()
-        let fixture = try makeFixture(validator: validator)
-        fixture.peer.waitForActivationHandler = {
-            await validator.waitUntilValidationStarts()
-            throw WatchPeerSyncError.activationTimedOut
-        }
+    func testActivationFailureStillImportsDurableReceiptAndSchedulesAckRecovery() async throws {
+        let scheduleProbe = RecoveryScheduleProbe()
+        let fixture = try makeFixture(
+            scheduleBackgroundRecovery: { scheduleProbe.schedule() }
+        )
+        fixture.peer.shouldFailAcknowledgements = true
+        fixture.peer.waitForActivationError = WatchPeerSyncError.activationTimedOut
+        let transferID = UUID()
         _ = try stageAudio(
             with: fixture.stager,
             videoID: "receiver015",
-            transferID: UUID(),
+            transferID: transferID,
             revision: 1
         )
 
         await fixture.receiver.handleConnectivityBackgroundTask()
 
-        let hasReceipt = try fixture.stager.listStagedFiles()
-            .contains { $0.envelope.youtubeID == "receiver015" }
-        XCTAssertTrue(hasReceipt)
+        XCTAssertEqual(fetch(WatchSavedAudio.self, fixture.context).map(\.youtubeID), ["receiver015"])
+        XCTAssertTrue(try fixture.stager.listStagedFiles().isEmpty)
+        XCTAssertEqual(try fixture.service.pendingAcknowledgements().count, 1)
+        XCTAssertEqual(scheduleProbe.count, 1)
         XCTAssertFalse(fixture.receiver.isReceiving)
         XCTAssertEqual(
             fixture.receiver.lastErrorMessage,
             WatchPeerSyncError.activationTimedOut.localizedDescription
         )
+
+        fixture.peer.shouldFailAcknowledgements = false
+        fixture.peer.waitForActivationError = nil
+        await fixture.receiver.handleRecoveryBackgroundTask()
+
+        XCTAssertEqual(fixture.peer.acknowledgements.last?.transferID, transferID)
+        XCTAssertTrue(try fixture.service.pendingAcknowledgements().isEmpty)
+        XCTAssertEqual(scheduleProbe.count, 1)
     }
 
     private func makeFixture(
         validator: any WatchAudioValidating = ReceiverAudioValidator(),
         capacityChecker: any WatchCapacityChecking = ReceiverCapacityChecker(),
-        invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+        invalidatePlaybackItem: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+        scheduleBackgroundRecovery: @escaping @MainActor @Sendable () -> Void = {}
     ) throws -> ReceiverFixture {
         let container = try ModelContainer(
             for: WatchSavedAudio.self,
@@ -465,7 +513,8 @@ final class WatchSessionReceiverTests: XCTestCase {
             stager: stager,
             library: service,
             peer: peer,
-            invalidatePlaybackItem: invalidatePlaybackItem
+            invalidatePlaybackItem: invalidatePlaybackItem,
+            scheduleBackgroundRecovery: scheduleBackgroundRecovery
         )
         return ReceiverFixture(
             container: container,
@@ -553,6 +602,15 @@ private struct ReceiverFixture {
     let receiver: WatchSessionReceiver
 }
 
+@MainActor
+private final class RecoveryScheduleProbe {
+    private(set) var count = 0
+
+    func schedule() {
+        count += 1
+    }
+}
+
 private struct ReceiverAudioValidator: WatchAudioValidating {
     func validate(
         fileURL: URL,
@@ -605,7 +663,7 @@ private actor SuspendingReceiverAudioValidator: WatchAudioValidating {
 private actor CancellableReceiverAudioValidator: WatchAudioValidating {
     private var validationStarted = false
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
-    private var validationCount = 0
+    private(set) var validationCount = 0
 
     func validate(
         fileURL: URL,

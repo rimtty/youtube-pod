@@ -52,11 +52,18 @@ final class WatchTransferSnapshotStoreTests: XCTestCase {
 
         XCTAssertEqual(try Data(contentsOf: prepared.audioURL), audio)
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(prepared.artworkURL)), artwork)
+        XCTAssertEqual(prepared.audioContentSHA256, try WatchFileDigest.sha256(at: prepared.audioURL))
+        XCTAssertEqual(
+            prepared.artworkContentSHA256,
+            try WatchFileDigest.sha256(at: XCTUnwrap(prepared.artworkURL))
+        )
 
         let secondID = UUID()
         let cloned = try await store.cloneTransfer(from: firstID, to: secondID)
         XCTAssertEqual(try Data(contentsOf: cloned.audioURL), audio)
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(cloned.artworkURL)), artwork)
+        XCTAssertEqual(cloned.audioContentSHA256, prepared.audioContentSHA256)
+        XCTAssertEqual(cloned.artworkContentSHA256, prepared.artworkContentSHA256)
 
         await store.removeTransfer(firstID)
         let removed = await store.preparedTransfer(transferID: firstID)

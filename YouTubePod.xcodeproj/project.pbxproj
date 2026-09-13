@@ -24,6 +24,8 @@
 		3425BFD1126608EBEA35C512 /* WatchLibraryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE7F0247E335E795C23A65F /* WatchLibraryRow.swift */; };
 		35F4176E804486C8FFEA1521 /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7088CDCBA218FE36100270DC /* AccountSettingsView.swift */; };
 		3B240296E21020FC8807F61C /* VideoRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A574E735EDFA6630EEDAE4AF /* VideoRowView.swift */; };
+		3B56545268134B655767170F /* WatchFileDigest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 169CDD1E0BD1C4E62D473911 /* WatchFileDigest.swift */; };
+		3B70BAEC365ED5E7B0264953 /* WatchISOBaseMediaContainerSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C8CBCFF52C62033DFA4AFEA /* WatchISOBaseMediaContainerSummary.swift */; };
 		3F8B56EFF8C2FD09703EE794 /* WatchConnectivityTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 812A408ED31A4B5EC3381241 /* WatchConnectivityTransport.swift */; };
 		42AE5AE52EF11D01435CE581 /* WatchAudioValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2575879BBB9A819198F22C39 /* WatchAudioValidator.swift */; };
 		45AA57D045F57EE8CCCBC40F /* WatchWCSessionDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB5B605B26858B41FC919F67 /* WatchWCSessionDriver.swift */; };
@@ -38,6 +40,8 @@
 		58CC34D99EE70EDE763B7ABE /* PlayerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D237A61198EDBECD6200B710 /* PlayerViews.swift */; };
 		602EFFBAE7489C7DA9AE25E3 /* WatchTransferEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */; };
 		60DB56C78ECD54D0655E0082 /* WatchAudioLibraryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36083239230144DE7DA56E93 /* WatchAudioLibraryServiceTests.swift */; };
+		62478DF1468F020E01C9467A /* WatchISOBaseMediaContainerSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C8CBCFF52C62033DFA4AFEA /* WatchISOBaseMediaContainerSummary.swift */; };
+		649BCA031D0E2ADABF1AB7CC /* WatchBackgroundSyncScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6480F8FAA5ED02BBDB73560 /* WatchBackgroundSyncScheduler.swift */; };
 		6714AA556D6B8C0D5B64FDCF /* WatchSavedAudioModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85422FE1666FF49BEA4EA0D7 /* WatchSavedAudioModelTests.swift */; };
 		68BC812623FA2D1E285CC6E3 /* WatchUIPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C6BEE7B9304A645EA20567 /* WatchUIPresentation.swift */; };
 		6BB2F94A12A491757926E063 /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB3B6D6907405BF886AF9F8 /* WatchRootView.swift */; };
@@ -85,6 +89,7 @@
 		E24FA4944E552E20D89EF859 /* GoogleAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379E658A1A8E71F6D9B50EEB /* GoogleAuthService.swift */; };
 		E3F19E1657BEBBDCED4BF4B9 /* WatchSimulatorSyncFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A4DD085ED95B7E9CB14014 /* WatchSimulatorSyncFixture.swift */; };
 		F51F69E595A3D5C8C6DDAD5C /* WatchPeerSyncServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2274003E6E80DC4643F2A8A /* WatchPeerSyncServiceTests.swift */; };
+		F586473783A7F4B1997FB25D /* WatchFileDigest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 169CDD1E0BD1C4E62D473911 /* WatchFileDigest.swift */; };
 		F80C5EA6DB744FB9DFA01821 /* DomainModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4AE588449D9CD2706E58E68 /* DomainModelTests.swift */; };
 		FA8F9A25A3AC6EA259D7B799 /* AudioPlayerServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB293A872F8849BC687BE49 /* AudioPlayerServiceTests.swift */; };
 		FB2CFB66624064D140EA0A85 /* WatchIncomingFileStager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8402F71553DB87ACCB2F8D13 /* WatchIncomingFileStager.swift */; };
@@ -157,6 +162,7 @@
 		0BE7F0247E335E795C23A65F /* WatchLibraryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLibraryRow.swift; sourceTree = "<group>"; };
 		0E579C68BB42B0407B7EFC0E /* DownloadManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManagerTests.swift; sourceTree = "<group>"; };
 		0FE522626BB6242CB4413740 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		169CDD1E0BD1C4E62D473911 /* WatchFileDigest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFileDigest.swift; sourceTree = "<group>"; };
 		19994901F44058463351D767 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		1BAE31885609C3FC49F159A8 /* PythonAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonAudioExtractor.swift; sourceTree = "<group>"; };
 		2575879BBB9A819198F22C39 /* WatchAudioValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioValidator.swift; sourceTree = "<group>"; };
@@ -191,6 +197,7 @@
 		776B3C239D404D1E559344E2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		780B899D6BE945278654079B /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		79AD702E28F627326D1D2B00 /* WatchCapacityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCapacityChecker.swift; sourceTree = "<group>"; };
+		7C8CBCFF52C62033DFA4AFEA /* WatchISOBaseMediaContainerSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchISOBaseMediaContainerSummary.swift; sourceTree = "<group>"; };
 		812A408ED31A4B5EC3381241 /* WatchConnectivityTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchConnectivityTransport.swift; sourceTree = "<group>"; };
 		8402F71553DB87ACCB2F8D13 /* WatchIncomingFileStager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchIncomingFileStager.swift; sourceTree = "<group>"; };
 		8461593F7ABB3843AEDA6BC3 /* Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatting.swift; sourceTree = "<group>"; };
@@ -210,6 +217,7 @@
 		B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTransferEnvelope.swift; sourceTree = "<group>"; };
 		B4C20802795A21434D3930EC /* Watch.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Watch.xcconfig; sourceTree = "<group>"; };
 		B62C27427695125FCDBF7E4E /* AudioLibraryServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioLibraryServiceTests.swift; sourceTree = "<group>"; };
+		B6480F8FAA5ED02BBDB73560 /* WatchBackgroundSyncScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchBackgroundSyncScheduler.swift; sourceTree = "<group>"; };
 		BB902880F3D658771A74D9C7 /* WatchSessionReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionReceiver.swift; sourceTree = "<group>"; };
 		BD98D97E966F4C5A90599E7D /* WatchUITestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchUITestFixture.swift; sourceTree = "<group>"; };
 		BE05D0C82802010EDB50433C /* YouTubePodSchemaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubePodSchemaTests.swift; sourceTree = "<group>"; };
@@ -269,6 +277,7 @@
 				8DBCA5DCCACE334EE470F41A /* WatchAudioLibraryService.swift */,
 				6A75FC54A4456C9D87CA197F /* WatchAudioPlayerService.swift */,
 				2575879BBB9A819198F22C39 /* WatchAudioValidator.swift */,
+				B6480F8FAA5ED02BBDB73560 /* WatchBackgroundSyncScheduler.swift */,
 				79AD702E28F627326D1D2B00 /* WatchCapacityChecker.swift */,
 				8402F71553DB87ACCB2F8D13 /* WatchIncomingFileStager.swift */,
 				DB2C2EF35D1511E2E502C271 /* WatchPeerSyncService.swift */,
@@ -454,6 +463,8 @@
 		B29F80A735EE90D6FD941D99 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				169CDD1E0BD1C4E62D473911 /* WatchFileDigest.swift */,
+				7C8CBCFF52C62033DFA4AFEA /* WatchISOBaseMediaContainerSummary.swift */,
 				749D4FA2155F0EB4E5592804 /* WatchSyncLog.swift */,
 				B216C3319F37562AA2866922 /* WatchTransferEnvelope.swift */,
 			);
@@ -803,8 +814,11 @@
 				80CEC619F47B5014C92DFD3A /* WatchAudioLibraryService.swift in Sources */,
 				C743B3A84596927082E2437F /* WatchAudioPlayerService.swift in Sources */,
 				42AE5AE52EF11D01435CE581 /* WatchAudioValidator.swift in Sources */,
+				649BCA031D0E2ADABF1AB7CC /* WatchBackgroundSyncScheduler.swift in Sources */,
 				164289CF4085781ACED0DBFD /* WatchCapacityChecker.swift in Sources */,
 				7A6B19FA451480C1EC5B6128 /* WatchDeletionTombstone.swift in Sources */,
+				3B56545268134B655767170F /* WatchFileDigest.swift in Sources */,
+				62478DF1468F020E01C9467A /* WatchISOBaseMediaContainerSummary.swift in Sources */,
 				FB2CFB66624064D140EA0A85 /* WatchIncomingFileStager.swift in Sources */,
 				805659ACCFF09E7C66C3BB05 /* WatchLibraryMetadata.swift in Sources */,
 				3425BFD1126608EBEA35C512 /* WatchLibraryRow.swift in Sources */,
@@ -859,6 +873,8 @@
 				3B240296E21020FC8807F61C /* VideoRowView.swift in Sources */,
 				AB5D836175C5A812F815937D /* WCSessionAdapter.swift in Sources */,
 				3F8B56EFF8C2FD09703EE794 /* WatchConnectivityTransport.swift in Sources */,
+				F586473783A7F4B1997FB25D /* WatchFileDigest.swift in Sources */,
+				3B70BAEC365ED5E7B0264953 /* WatchISOBaseMediaContainerSummary.swift in Sources */,
 				FCAF8A58B44B64F648608B1D /* WatchSyncLog.swift in Sources */,
 				602EFFBAE7489C7DA9AE25E3 /* WatchTransferEnvelope.swift in Sources */,
 				267277CF39523093EA184D28 /* WatchTransferRecord.swift in Sources */,

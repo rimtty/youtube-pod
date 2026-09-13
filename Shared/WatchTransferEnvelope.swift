@@ -5,6 +5,13 @@ enum WatchTransferFileKind: String, Codable, CaseIterable, Sendable {
     case artwork
 }
 
+/// Identifies audio that completed the iPhone normalization and random-access
+/// container checks before WatchConnectivity accepted it. A SHA-256 digest
+/// binds this claim to the exact bytes delivered to Apple Watch.
+enum WatchAudioValidationProfile: String, Codable, Sendable {
+    case normalizedFlatM4A
+}
+
 enum WatchTransferAcknowledgementOutcome: String, Codable, Sendable {
     case imported
     case failed
@@ -31,6 +38,8 @@ enum WatchTransferProtocolError: Error, Equatable, LocalizedError, Sendable {
     case invalidDuration
     case invalidFileSize
     case invalidPlaybackPosition
+    case invalidContentDigest
+    case invalidValidationProfile
     case malformedPayload
 
     var errorDescription: String? {
@@ -53,6 +62,10 @@ enum WatchTransferProtocolError: Error, Equatable, LocalizedError, Sendable {
             "ファイルサイズが正しくありません。"
         case .invalidPlaybackPosition:
             "再生位置が正しくありません。"
+        case .invalidContentDigest:
+            "転送ファイルの検証情報が正しくありません。"
+        case .invalidValidationProfile:
+            "転送ファイルの検証方式が正しくありません。"
         case .malformedPayload:
             "転送メタデータを読み取れません。"
         }
@@ -75,6 +88,8 @@ struct WatchTransferEnvelope: Codable, Equatable, Sendable {
     let duration: TimeInterval
     let fileSize: Int64
     let playbackPosition: TimeInterval
+    let contentSHA256: String?
+    let audioValidationProfile: WatchAudioValidationProfile?
 
     init(
         schemaVersion: Int = Self.currentSchemaVersion,
@@ -88,7 +103,9 @@ struct WatchTransferEnvelope: Codable, Equatable, Sendable {
         viewCount: Int64,
         duration: TimeInterval,
         fileSize: Int64,
-        playbackPosition: TimeInterval
+        playbackPosition: TimeInterval,
+        contentSHA256: String? = nil,
+        audioValidationProfile: WatchAudioValidationProfile? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.transferID = transferID
@@ -102,6 +119,8 @@ struct WatchTransferEnvelope: Codable, Equatable, Sendable {
         self.duration = duration
         self.fileSize = fileSize
         self.playbackPosition = playbackPosition
+        self.contentSHA256 = contentSHA256
+        self.audioValidationProfile = audioValidationProfile
     }
 
     var normalizedPlaybackPosition: TimeInterval {
@@ -138,6 +157,15 @@ struct WatchTransferEnvelope: Codable, Equatable, Sendable {
         }
         guard playbackPosition.isFinite, playbackPosition >= 0 else {
             throw WatchTransferProtocolError.invalidPlaybackPosition
+        }
+        if let contentSHA256,
+           !WatchFileDigest.isValidSHA256(contentSHA256) {
+            throw WatchTransferProtocolError.invalidContentDigest
+        }
+        if audioValidationProfile != nil {
+            guard fileKind == .audio, contentSHA256 != nil else {
+                throw WatchTransferProtocolError.invalidValidationProfile
+            }
         }
         return self
     }

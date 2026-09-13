@@ -18,6 +18,22 @@ struct PreparedWatchTransfer: Sendable, Equatable {
     let transferID: UUID
     let audioURL: URL
     let artworkURL: URL?
+    let audioContentSHA256: String?
+    let artworkContentSHA256: String?
+
+    init(
+        transferID: UUID,
+        audioURL: URL,
+        artworkURL: URL?,
+        audioContentSHA256: String? = nil,
+        artworkContentSHA256: String? = nil
+    ) {
+        self.transferID = transferID
+        self.audioURL = audioURL
+        self.artworkURL = artworkURL
+        self.audioContentSHA256 = audioContentSHA256
+        self.artworkContentSHA256 = artworkContentSHA256
+    }
 }
 
 protocol WatchTransferSnapshotStoring: Sendable {
@@ -381,6 +397,8 @@ struct ISOBaseMediaFileSummary: Equatable, Sendable {
 }
 
 actor WatchTransferSnapshotStore: WatchTransferSnapshotStoring {
+    private static let audioDigestFileName = "audio.sha256"
+    private static let artworkDigestFileName = "artwork.sha256"
     private let rootURL: URL
     private let fileManager: FileManager
     private let audioNormalizer: any WatchAudioNormalizing
@@ -511,11 +529,31 @@ actor WatchTransferSnapshotStore: WatchTransferSnapshotStoring {
             throw WatchTransferSnapshotError.sourceMissing
         }
         let artworkURL = directory.appendingPathComponent("artwork.jpg")
+        let hasArtwork = fileManager.fileExists(atPath: artworkURL.path)
         return PreparedWatchTransfer(
             transferID: transferID,
             audioURL: audioURL,
-            artworkURL: fileManager.fileExists(atPath: artworkURL.path) ? artworkURL : nil
+            artworkURL: hasArtwork ? artworkURL : nil,
+            audioContentSHA256: try digest(
+                for: audioURL,
+                sidecarURL: directory.appendingPathComponent(Self.audioDigestFileName)
+            ),
+            artworkContentSHA256: hasArtwork ? try digest(
+                for: artworkURL,
+                sidecarURL: directory.appendingPathComponent(Self.artworkDigestFileName)
+            ) : nil
         )
+    }
+
+    private func digest(for fileURL: URL, sidecarURL: URL) throws -> String {
+        if let stored = try? String(contentsOf: sidecarURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           WatchFileDigest.isValidSHA256(stored) {
+            return stored
+        }
+        let value = try WatchFileDigest.sha256(at: fileURL)
+        try value.write(to: sidecarURL, atomically: true, encoding: .utf8)
+        return value
     }
 
     private func directory(for transferID: UUID) -> URL {

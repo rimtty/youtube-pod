@@ -397,7 +397,7 @@ struct WatchPeerSyncServiceTests {
 
         #expect(failure == nil)
         let stagedBeforeReturn = try #require(fixture.stager.listStagedFiles().first)
-        try FileManager.default.removeItem(at: sourceURL)
+        #expect(!FileManager.default.fileExists(atPath: sourceURL.path))
         #expect(try Data(contentsOf: stagedBeforeReturn.fileURL) == payload)
 
         await Task.yield()

@@ -68,6 +68,7 @@ protocol WatchTransferManaging: AnyObject {
 
     func start()
     func refreshState()
+    func resumeFromForeground()
     func enqueue(_ source: WatchTransferSource) async throws
     func cancel(videoID: String)
     func retry(videoID: String) async throws

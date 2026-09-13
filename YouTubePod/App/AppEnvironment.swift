@@ -45,6 +45,11 @@ final class AppEnvironment {
 
     func start() async {
         watchTransfers.start()
+        // Do not wait for the first foreground transition callback to learn
+        // the Watch's state. SwiftUI can create this environment while the
+        // scene is already active, in which case no initial phase change is
+        // guaranteed.
+        watchTransfers.refreshState()
         await auth.restore()
         player.configureAudioSession()
     }

@@ -78,6 +78,29 @@ final class PhoneWatchTransferService: WatchTransferManaging {
         publishPendingInventoryRequestIfPossible()
     }
 
+    /// Re-establishes every volatile synchronization boundary after iPhone
+    /// suspension. A new request identity is intentional: WCSession's
+    /// application context is latest-wins and publishing an unchanged payload
+    /// is not guaranteed to notify the counterpart again.
+    func resumeFromForeground() {
+        let request = makeInventoryRequest()
+        do {
+            try inventoryRequestStore.save(request)
+            pendingInventoryRequest = request
+            publishedInventoryRequestID = nil
+            lastPersistenceError = nil
+        } catch {
+            lastPersistenceError = error.localizedDescription
+            return
+        }
+
+        WatchSyncLog.phoneService.notice(
+            "foreground_resume request=\(request.requestID.uuidString, privacy: .public)"
+        )
+        transport.activate()
+        publishPendingInventoryRequestIfPossible()
+    }
+
     func enqueue(_ source: WatchTransferSource) async throws {
         guard connectionStatus.canTransfer else {
             throw WatchTransferServiceError.watchUnavailable
@@ -698,7 +721,12 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 )
                 try transport.enqueueFile(
                     at: prepared.audioURL,
-                    envelope: try envelope(for: record, fileKind: .audio, fileURL: prepared.audioURL)
+                    envelope: try envelope(
+                        for: record,
+                        fileKind: .audio,
+                        fileURL: prepared.audioURL,
+                        contentSHA256: prepared.audioContentSHA256
+                    )
                 )
             } catch {
                 WatchSyncLog.phoneService.error(
@@ -716,7 +744,12 @@ final class PhoneWatchTransferService: WatchTransferManaging {
                 do {
                     try transport.enqueueFile(
                         at: artworkURL,
-                        envelope: try envelope(for: record, fileKind: .artwork, fileURL: artworkURL)
+                        envelope: try envelope(
+                            for: record,
+                            fileKind: .artwork,
+                            fileURL: artworkURL,
+                            contentSHA256: prepared.artworkContentSHA256
+                        )
                     )
                 } catch {
                     // Artwork is optional. An audio file that has already been
@@ -967,7 +1000,8 @@ final class PhoneWatchTransferService: WatchTransferManaging {
     private func envelope(
         for record: WatchTransferRecord,
         fileKind: WatchTransferFileKind,
-        fileURL: URL
+        fileURL: URL,
+        contentSHA256: String?
     ) throws -> WatchTransferEnvelope {
         try WatchTransferEnvelope(
             transferID: record.transferID,
@@ -980,7 +1014,11 @@ final class PhoneWatchTransferService: WatchTransferManaging {
             viewCount: record.savedViewCount,
             duration: record.duration,
             fileSize: fileSize(at: fileURL),
-            playbackPosition: record.playbackPosition
+            playbackPosition: record.playbackPosition,
+            contentSHA256: contentSHA256,
+            audioValidationProfile: fileKind == .audio && contentSHA256 != nil
+                ? .normalizedFlatM4A
+                : nil
         ).validated()
     }
 
